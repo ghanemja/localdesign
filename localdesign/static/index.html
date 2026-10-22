@@ -33,7 +33,20 @@
     <button class="ghost" id="flowBtn" title="Plan a whole flow (journey or PRD → linked screens)">⇶ Flow</button>
     <button class="ghost" id="playBtn" title="Play the prototype: click linked elements to navigate">▶ Play</button>
     <button class="ghost" id="fitBtn" title="Fit all (⇧1)">Fit</button>
-    <button class="ghost" id="exportBtn" title="Export project JSON">Export</button>
+    <div class="menuwrap">
+      <button class="ghost" id="exportBtn" title="Export">Export ▾</button>
+      <div id="exportMenu" class="menu hidden">
+        <button data-x="json">Project (.json)</button>
+        <button data-x="spec">Design spec (.md)</button>
+        <div class="sep"></div>
+        <button data-x="html">Selected screen → HTML</button>
+        <button data-x="react">Selected screen → React (.jsx + .css)</button>
+        <button data-x="react-ai">Selected screen → React + Tailwind (AI)</button>
+        <div class="sep"></div>
+        <button data-x="html-all">All screens → HTML files</button>
+        <button data-x="react-all">All screens → React (.jsx + .css)</button>
+      </div>
+    </div>
     <button class="ghost" id="settingsBtn" title="Settings"><span id="modelDot" class="dot"></span><span id="modelLabel">…</span></button>
   </div>
 </header>

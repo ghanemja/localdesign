@@ -216,3 +216,12 @@ def extract_json_array(text: str):
         from .components import repair_json
         inner = repair_json("{" + '"a":' + text[i:] + "}")
         return json.loads(inner)["a"]
+
+
+REACT_TAILWIND = """Convert this screen into a production-quality React component using Tailwind CSS utility classes (no custom CSS unless unavoidable; CSS variables from the page may be mapped to Tailwind arbitrary values or a small theme comment). Keep the visual design, content and structure. Use semantic JSX, extract obvious repeated pieces into small inner components in the same file, keep data as plain constants at the top so it is easy to replace with props. Export the main component as default. Output ONLY the .jsx file contents, no fences, no commentary.
+
+Component name: {name}
+
+```html
+{html}
+```"""

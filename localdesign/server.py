@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, components, config, designsystem, llm, prompts
+from . import __version__, components, config, designsystem, export, llm, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -98,7 +98,7 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
     rec = {"kind": kind, "mode": mode, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
            "prompt_chars": len(sys_p) + sum(len(m.get("content", "")) for m in msgs),
            "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300]}
-    render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else (lambda text: "") if mode == "element" else prompts.partial_html
+    render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else (lambda text: "") if mode in ("element", "text") else prompts.partial_html
     interval = 1.0 if mode == "spec" else 0.25
     try:
         thinking_sent = False
@@ -137,6 +137,10 @@ def _spec_partial(text: str, width: int, ds, data) -> str:
 
 
 def _finish(q, idx, buf, warning=None, mode="html", width=1280, ds=None, data=None):
+    if mode == "text":
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", buf.strip(), flags=re.S)
+        q.put({"type": "done", "i": idx, "text": text, "mode": "text", **({"warning": warning} if warning else {})})
+        return
     if mode == "element":
         frag = prompts.extract_fragment(buf)
         if "<" not in frag:
@@ -320,6 +324,28 @@ class Handler(BaseHTTPRequestHandler):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
                 threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/export/react":
+            html, title = body.get("html") or "", body.get("title") or "Screen"
+            if "<" not in html:
+                return _json(self, {"error": "need html"}, 400)
+            return _json(self, export.html_to_react(html, title))
+        if u.path == "/api/export/spec":
+            proj = body.get("project")
+            if not isinstance(proj, dict):
+                return _json(self, {"error": "need project"}, 400)
+            return _json(self, {"markdown": export.design_spec_md(proj)})
+        if u.path == "/api/export/react-ai":
+            html, title = body.get("html") or "", body.get("title") or "Screen"
+            if "<" not in html:
+                return _json(self, {"error": "need html"}, 400)
+            with CFG_LOCK:
+                cfg = dict(CFG)
+            q: queue.Queue = queue.Queue()
+            name = export.component_name(title)
+            sys_p = "You are a senior front-end engineer. You write clean, idiomatic React + Tailwind."
+            user = prompts.REACT_TAILWIND.format(name=name, html=html[:60000])
+            threading.Thread(target=_stream_to_queue, args=(cfg, 0, sys_p, [{"role": "user", "content": user}], q), kwargs={"temperature": 0.2, "kind": "export", "mode": "text"}, daemon=True).start()
+            return _sse_multiplex(self, q, 1)
         if u.path == "/api/plan":
             text = (body.get("text") or "").strip()
             if not text:

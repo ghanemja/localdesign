@@ -310,7 +310,37 @@
   $("#fitBtn").addEventListener("click", fitAll);
   $$("#deviceSeg button").forEach(b => b.addEventListener("click", () => { project.device = +b.dataset.w; renderAll(); scheduleSave(); }));
   $("#projectName").addEventListener("change", e => { project.name = e.target.value.trim() || "Untitled"; scheduleSave(); });
-  $("#exportBtn").addEventListener("click", () => download(`${slug(project.name)}.localdesign.json`, JSON.stringify(project, null, 2), "application/json"));
+  const exportMenu = $("#exportMenu");
+  $("#exportBtn").addEventListener("click", e => { e.stopPropagation(); exportMenu.classList.toggle("hidden"); });
+  document.addEventListener("click", e => { if (!e.target.closest(".menuwrap")) exportMenu.classList.add("hidden"); });
+  exportMenu.addEventListener("click", async e => {
+    const b = e.target.closest("button"); if (!b) return; exportMenu.classList.add("hidden");
+    const kind = b.dataset.x, s = selected && screenById(selected);
+    const needSel = ["html", "react", "react-ai"].includes(kind);
+    if (needSel && !(s && s.html)) { toast("Select a screen first"); return; }
+    const post = async (url, body) => { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const d = await r.json(); if (d.error) throw new Error(d.error); return d; };
+    try {
+      if (kind === "json") download(`${slug(project.name)}.localdesign.json`, JSON.stringify(project, null, 2), "application/json");
+      else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
+      else if (kind === "html") download(`${slug(s.title)}.html`, s.html, "text/html");
+      else if (kind === "html-all") { for (const sc of project.screens.filter(x => x.html)) { download(`${slug(sc.title)}.html`, sc.html, "text/html"); await new Promise(r => setTimeout(r, 300)); } }
+      else if (kind === "react" || kind === "react-all") {
+        const list = kind === "react" ? [s] : project.screens.filter(x => x.html);
+        for (const sc of list) { const d = await post("/api/export/react", { html: sc.html, title: sc.title }); download(`${d.name}.jsx`, d.jsx, "text/javascript"); await new Promise(r => setTimeout(r, 250)); download(`${d.name}.css`, d.css, "text/css"); await new Promise(r => setTimeout(r, 300)); }
+        toast(`Exported ${list.length} component${list.length > 1 ? "s" : ""} (.jsx + .css)`);
+      }
+      else if (kind === "react-ai") {
+        if (goBtn.disabled) { toast("Wait for the current generation to finish."); return; }
+        aborter = new AbortController(); setBusy(true, "Converting to React + Tailwind");
+        try {
+          await streamPost("/api/export/react-ai", { html: s.html, title: s.title }, ev => {
+            if (ev.type === "done") { const name = (ev.text.match(/function\s+([A-Z][A-Za-z0-9]*)/) || [, slug(s.title)])[1]; download(`${name}.jsx`, ev.text, "text/javascript"); toast("Exported " + name + ".jsx"); }
+            else if (ev.type === "error") toast("Error: " + ev.message, 6000);
+          }, aborter.signal);
+        } finally { setBusy(false); aborter = null; }
+      }
+    } catch (err) { toast("Export failed: " + err.message, 5000); }
+  });
   window.addEventListener("keydown", e => {
     if (isTyping(e)) { if (e.key === "Escape") e.target.blur(); return; }
     const mod = e.metaKey || e.ctrlKey;
@@ -508,7 +538,10 @@
   }
   function showPlayScreen(s) {
     playing.id = s.id; $("#playTitle").textContent = s.title;
-    const f = $("#playFrame"); f.style.width = s.width + "px"; f.style.height = HEIGHTS[s.width] + "px";
+    const f = $("#playFrame"), stage = $("#player .pstage"); const h = HEIGHTS[s.width];
+    f.style.width = s.width + "px"; f.style.height = h + "px";
+    const z = Math.min(1, (stage.clientWidth - 32) / s.width, (stage.clientHeight - 32) / h);
+    f.style.transform = `scale(${z})`; f.style.transformOrigin = "center center";
     f.srcdoc = withEditor(s.html);
     $("#playBack").disabled = !playing.history.length;
   }
