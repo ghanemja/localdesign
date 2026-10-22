@@ -98,7 +98,7 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
     rec = {"kind": kind, "mode": mode, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
            "prompt_chars": len(sys_p) + sum(len(m.get("content", "")) for m in msgs),
            "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300]}
-    render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else prompts.partial_html
+    render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else (lambda text: "") if mode == "element" else prompts.partial_html
     interval = 1.0 if mode == "spec" else 0.25
     try:
         thinking_sent = False
@@ -137,6 +137,13 @@ def _spec_partial(text: str, width: int, ds, data) -> str:
 
 
 def _finish(q, idx, buf, warning=None, mode="html", width=1280, ds=None, data=None):
+    if mode == "element":
+        frag = prompts.extract_fragment(buf)
+        if "<" not in frag:
+            q.put({"type": "error", "i": idx, "message": "Model returned no HTML element:\n" + buf[:400]})
+            return
+        q.put({"type": "done", "i": idx, "html": frag, "mode": "element", **({"warning": warning} if warning else {})})
+        return
     if mode == "spec":
         try:
             spec = components.extract_json(buf)
@@ -313,6 +320,20 @@ class Handler(BaseHTTPRequestHandler):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
                 threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/iterate-element":
+            el_html, instruction = body.get("html") or "", (body.get("instruction") or "").strip()
+            if not el_html or not instruction:
+                return _json(self, {"error": "need html and instruction"}, 400)
+            with CFG_LOCK:
+                cfg = dict(CFG)
+            q: queue.Queue = queue.Queue()
+            sys_p = prompts.system_prompt(int(body.get("width") or 1280), None, cfg.get("allow_cdn", False))
+            user = prompts.ELEMENT_ITERATE.format(css=(body.get("css") or "")[:4000], html=el_html[:12000], instruction=instruction)
+            ds_extra = prompts.design_system_prompt(body.get("design_system") or None, False)
+            if ds_extra:
+                user += "\n\n" + ds_extra
+            threading.Thread(target=_stream_to_queue, args=(cfg, 0, sys_p, [{"role": "user", "content": user}], q), kwargs={"temperature": 0.4, "kind": "element", "mode": "element"}, daemon=True).start()
+            return _sse_multiplex(self, q, 1)
         if u.path == "/api/ds/parse":
             try:
                 return _json(self, designsystem.parse(str(body.get("text") or ""), body.get("kind") or "auto"))

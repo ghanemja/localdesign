@@ -48,7 +48,7 @@
 </main>
 
 <form id="promptBar" autocomplete="off">
-  <div id="targetChip" class="chip hidden">Editing <b id="targetName"></b> <button type="button" id="clearTarget" title="Deselect (Esc)">×</button></div>
+  <div id="targetChip" class="chip hidden"><span id="targetKind">Editing</span> <b id="targetName"></b> <button type="button" id="clearTarget" title="Deselect (Esc)">×</button></div>
   <textarea id="prompt" rows="1" placeholder="Describe a screen to design…"></textarea>
   <div class="row">
     <span id="status" class="muted"></span>
@@ -155,6 +155,23 @@
   <menu><span class="grow"></span><button type="button" id="dataClose">Done</button></menu>
 </dialog>
 
+<div id="stylePop" class="pop hidden">
+  <label>text <input data-s="color" type="text"></label>
+  <label>background <input data-s="background" type="text"></label>
+  <label>size <input data-s="fontSize" type="text" placeholder="14px"></label>
+  <label>weight <select data-s="fontWeight"><option value="">—</option><option>400</option><option>500</option><option>600</option><option>700</option></select></label>
+  <label>padding <input data-s="padding" type="text" placeholder="8px 12px"></label>
+  <label>radius <input data-s="borderRadius" type="text" placeholder="8px"></label>
+  <label>width <input data-s="width" type="text" placeholder="auto / 50% / 320px"></label>
+  <label>align <select data-s="textAlign"><option value="">—</option><option>left</option><option>center</option><option>right</option></select></label>
+  <div class="row"><span class="muted small">changes apply live</span><span class="grow"></span><button type="button" class="ghost" id="styleReset">Clear inline styles</button><button type="button" id="styleDone">Done</button></div>
+</div>
+<div id="linkPop" class="pop hidden">
+  <label>Clicking this element goes to <select id="linkTarget"><option value="">— no link —</option></select></label>
+  <div class="row"><span class="muted small">Links drive the prototype (▶ Play) and the flow arrows.</span><span class="grow"></span><button type="button" id="linkDone">Done</button></div>
+</div>
+<div id="dragGhost" class="hidden"></div>
+
 <div id="toast" class="hidden"></div>
 
 <template id="frameTpl">
@@ -170,6 +187,18 @@
       <button class="ic dl" title="Download HTML">↓</button>
       <button class="ic open" title="Open in new tab">↗</button>
       <button class="ic del" title="Delete">×</button>
+    </div>
+    <div class="eltools hidden">
+      <span class="crumb"></span>
+      <span class="grow"></span>
+      <button data-act="edit" title="Edit text (double-click in the screen)">T</button>
+      <button data-act="style" title="Style">◐</button>
+      <button data-act="up" title="Move up (⌥↑)">↑</button>
+      <button data-act="down" title="Move down (⌥↓)">↓</button>
+      <button data-act="dup" title="Duplicate (⌘D)">⧉</button>
+      <button data-act="link" title="Link to another screen (prototype)">⇢</button>
+      <button data-act="ai" title="Change this element with AI — type in the prompt bar">✦ AI</button>
+      <button data-act="delete" title="Delete (⌫)">×</button>
     </div>
     <div class="body">
       <iframe sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer"></iframe>

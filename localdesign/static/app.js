@@ -97,9 +97,17 @@
     if ($("iframe", el).dataset.html !== s.html) setFrameHTML(el, s.html);
     return el;
   }
+  let EDITOR_SRC = "";
+  fetch("/static/editor.js").then(r => r.text()).then(t => { EDITOR_SRC = t; }).catch(() => {});
+  function withEditor(html) {
+    if (!EDITOR_SRC || !html) return html;
+    const tag = `<script data-ld-ui="1">${EDITOR_SRC}</script>`;
+    return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + "</body>") : html + tag;
+  }
   function setFrameHTML(el, html) {
     const f = $("iframe", el);
-    f.dataset.html = html; f.srcdoc = html || "<!doctype html><body style='font:14px system-ui;color:#999;padding:24px'>…</body>";
+    f.dataset.html = html; f.srcdoc = withEditor(html) || "<!doctype html><body style='font:14px system-ui;color:#999;padding:24px'>…</body>";
+    elClear(el.dataset.id);
   }
   function wireFrame(el, s) {
     el.addEventListener("pointerdown", e => { if (e.button === 0 && !space) { select(s.id); } });
@@ -137,13 +145,22 @@
     applyCamera();
   }
   function select(id) {
+    if (selected && selected !== id) { const prev = frames.get(selected); if (prev) postFrame(selected, { type: "mode", edit: false }); elClear(selected); }
     selected = id;
     frames.forEach((el, fid) => el.classList.toggle("selected", fid === id));
     const s = id && screenById(id);
+    if (s) postFrame(id, { type: "mode", edit: true });
+    updateChip();
+  }
+  function updateChip() {
+    const s = selected && screenById(selected);
+    const el = elSel && frames.get(elSel.frame) ? elSel : null;
     $("#targetChip").classList.toggle("hidden", !s);
-    if (s) { $("#targetName").textContent = s.title; promptEl.placeholder = "Describe a change to this screen…"; goBtn.firstChild.textContent = "Apply "; }
+    if (el) { $("#targetKind").textContent = "Element"; $("#targetName").textContent = `${el.info.desc} in ${screenById(el.frame)?.title || ""}`; promptEl.placeholder = "Describe how to change this element…"; goBtn.firstChild.textContent = "Change "; }
+    else if (s) { $("#targetKind").textContent = "Editing"; $("#targetName").textContent = s.title; promptEl.placeholder = "Describe a change to this screen…"; goBtn.firstChild.textContent = "Apply "; }
     else { promptEl.placeholder = "Describe a screen to design…"; goBtn.firstChild.textContent = "Generate "; }
   }
+  function postFrame(id, msg) { const el = frames.get(id); const w = el && $("iframe", el).contentWindow; if (w) w.postMessage({ ld: true, ...msg }, "*"); }
   function removeScreen(id) {
     project.screens = project.screens.filter(s => s.id !== id);
     if (selected === id) select(null);
@@ -275,7 +292,8 @@
     e.preventDefault(); const text = promptEl.value.trim(); if (!text || goBtn.disabled) return;
     promptEl.value = ""; autosize();
     const s = selected && screenById(selected);
-    if (s && s.html) iterate(s, text); else generate(text);
+    if (elSel && s && elSel.frame === s.id) iterateElement(s, text);
+    else if (s && s.html) iterate(s, text); else generate(text);
   });
   promptEl.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
   promptEl.addEventListener("beforeinput", e => { if (e.inputType === "insertLineBreak" || (e.inputType === "insertParagraph")) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
@@ -297,7 +315,8 @@
     if (isTyping(e)) { if (e.key === "Escape") e.target.blur(); return; }
     const mod = e.metaKey || e.ctrlKey;
     if (e.key === "Escape") select(null);
-    else if ((e.key === "Delete" || e.key === "Backspace") && selected) removeScreen(selected);
+    else if ((e.key === "Delete" || e.key === "Backspace") && selected) { if (elSel && elSel.frame === selected) postFrame(selected, { type: "delete" }); else if (confirm("Delete this screen?")) removeScreen(selected); }
+    else if (mod && e.key === "z" && selected) { e.preventDefault(); undoScreen(screenById(selected)); }
     else if (mod && e.key === "d" && selected) { e.preventDefault(); duplicate(screenById(selected)); }
     else if (mod && (e.key === "=" || e.key === "+")) { e.preventDefault(); zoomAt(1.25, viewport.clientWidth / 2, viewport.clientHeight / 2); }
     else if (mod && e.key === "-") { e.preventDefault(); zoomAt(0.8, viewport.clientWidth / 2, viewport.clientHeight / 2); }
@@ -356,6 +375,115 @@
     catch { toast("Not a valid project file"); }
     e.target.value = "";
   });
+
+  // ------------------------------------------------------------ in-screen editor
+  let elSel = null;        // { frame: screenId, info }
+  let xdrag = null;        // cross-frame drag: { from, html, desc }
+  let pendingDrag = null;  // frame id that started an in-frame drag
+  function frameOfWindow(w) { for (const [id, el] of frames) if ($("iframe", el).contentWindow === w) return id; return null; }
+  window.addEventListener("message", e => {
+    const m = e.data; if (!m || !m.ld) return;
+    const id = frameOfWindow(e.source); if (!id) return;
+    const s = screenById(id), el = frames.get(id); if (!s || !el) return;
+    switch (m.type) {
+      case "ready": if (id === selected) postFrame(id, { type: "mode", edit: true }); if (playing && playing.id === id) postFrame(id, { type: "play" }); break;
+      case "select": elSel = { frame: id, info: m.info }; showElTools(el, m.info); updateChip(); if (!$("#stylePop").classList.contains("hidden")) fillStylePop(m.info); break;
+      case "deselect": if (elSel && elSel.frame === id) { elSel = null; } hideElTools(el); updateChip(); break;
+      case "html": commitEdit(s, el, m.html, m.kind); break;
+      case "undo": undoScreen(s); break;
+      case "dragstart": pendingDrag = id; break;
+      case "dragout": startXDrag(id, m.html, m.desc); break;
+      case "dragback": cancelXDrag(false); break;
+      case "dragend": pendingDrag = null; break;
+      case "navigate": playNavigate(m.target); break;
+    }
+  });
+  function elClear(id) { if (elSel && elSel.frame === id) { elSel = null; updateChip(); } const el = frames.get(id); if (el) hideElTools(el); }
+  function showElTools(el, info) { const t = $(".eltools", el); t.classList.remove("hidden"); $(".crumb", t).textContent = info.crumbs || info.desc; $("[data-act=edit]", t).style.display = info.isLeaf ? "" : "none"; }
+  function hideElTools(el) { $(".eltools", el).classList.add("hidden"); hidePops(); }
+  function hidePops() { $("#stylePop").classList.add("hidden"); $("#linkPop").classList.add("hidden"); }
+  function commitEdit(s, el, html, kind) {
+    s.html = html; s.versions.push(html); $("iframe", el).dataset.html = html;   // don't reload the iframe; it already shows the change
+    if (s.spec) { s.spec = null; (s.specVersions ||= []).push(null); $(".eng", el).textContent = ""; if (!s._specWarned) { s._specWarned = true; toast("Manual edit: this screen is now plain HTML (AI edits will work on the HTML).", 4000); } }
+    else if (s.specVersions) s.specVersions.push(null);
+    const v = $(".ver", el); v.textContent = "v" + s.versions.length; v.style.display = s.versions.length > 1 ? "" : "none";
+    scheduleSave();
+  }
+  function undoScreen(s) {
+    if (!s || s.versions.length < 2) { toast("Nothing to undo", 1200); return; }
+    s.versions.pop(); if (s.specVersions) s.specVersions.pop();
+    s.html = s.versions[s.versions.length - 1]; s.spec = s.specVersions ? (s.specVersions[s.specVersions.length - 1] || null) : null;
+    renderFrame(s); scheduleSave(); toast("Undo", 900);
+  }
+  // toolbar actions (delegated; the template is cloned per frame)
+  canvas.addEventListener("click", e => {
+    const b = e.target.closest(".eltools button"); if (!b) return;
+    const fr = e.target.closest(".frame"); const id = fr.dataset.id; e.stopPropagation();
+    const act = b.dataset.act;
+    if (act === "style") { toggleStylePop(fr); return; }
+    if (act === "link") { toggleLinkPop(fr); return; }
+    if (act === "ai") { promptEl.focus(); toast("Describe the change in the prompt bar", 1800); return; }
+    const msg = { edit: { type: "edit" }, up: { type: "move", dir: -1 }, down: { type: "move", dir: 1 }, dup: { type: "dup" }, delete: { type: "delete" } }[act];
+    if (msg) postFrame(id, msg);
+  });
+  // style popover
+  function popAt(pop, fr) { const r = fr.getBoundingClientRect(), vr = viewport.getBoundingClientRect(); pop.style.left = Math.max(8, Math.min(vr.width - 316, r.left - vr.left)) + "px"; pop.style.top = Math.max(8, r.top - vr.top + 64 * project.camera.z) + "px"; }
+  function toggleStylePop(fr) { const pop = $("#stylePop"); if (!pop.classList.contains("hidden")) { pop.classList.add("hidden"); return; } $("#linkPop").classList.add("hidden"); if (elSel) fillStylePop(elSel.info); popAt(pop, fr); pop.classList.remove("hidden"); }
+  function fillStylePop(info) { const st = info.styles || {}; $$("#stylePop [data-s]").forEach(i => { const k = i.dataset.s; i.value = k === "background" ? (st.background === "rgba(0, 0, 0, 0)" ? "" : st.background || "") : (st[k] || ""); }); }
+  $$("#stylePop [data-s]").forEach(i => i.addEventListener("input", () => { if (!elSel) return; postFrame(elSel.frame, { type: "style", styles: { [i.dataset.s]: i.value } }); }));
+  $("#styleReset").addEventListener("click", () => { if (!elSel) return; postFrame(elSel.frame, { type: "style", styles: Object.fromEntries($$("#stylePop [data-s]").map(i => [i.dataset.s, ""])) }); });
+  $("#styleDone").addEventListener("click", () => $("#stylePop").classList.add("hidden"));
+  // link popover
+  function toggleLinkPop(fr) {
+    const pop = $("#linkPop"); if (!pop.classList.contains("hidden")) { pop.classList.add("hidden"); return; } $("#stylePop").classList.add("hidden");
+    const sel = $("#linkTarget"); sel.innerHTML = '<option value="">— no link —</option>' + project.screens.filter(s => s.id !== fr.dataset.id).map(s => `<option value="${esc(s.title)}" ${elSel && elSel.info.link === s.title ? "selected" : ""}>${esc(s.title)}</option>`).join("");
+    popAt(pop, fr); pop.classList.remove("hidden");
+  }
+  $("#linkTarget").addEventListener("change", e => { if (elSel) postFrame(elSel.frame, { type: "link", target: e.target.value }); drawArrows(); });
+  $("#linkDone").addEventListener("click", () => $("#linkPop").classList.add("hidden"));
+  // element-scoped AI edit
+  async function iterateElement(s, instruction) {
+    const el = frames.get(s.id), info = elSel.info; el.classList.add("loading");
+    const css = (s.html.match(/<style[^>]*>([\s\S]*?)<\/style>/i) || [, ""])[1];
+    const root = (css.match(/:root\s*\{[^}]*\}/g) || []).join("\n");
+    aborter = new AbortController(); setBusy(true, "Changing element");
+    try {
+      await streamPost("/api/iterate-element", { html: info.html, css: root || css.slice(0, 3000), instruction, width: s.width, design_system: project.designSystem || undefined }, ev => {
+        if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
+        else if (ev.type === "done") { postFrame(s.id, { type: "replace", html: ev.html }); if (ev.warning) toast("⚠ " + ev.warning, 6000); }
+        else if (ev.type === "error") toast("Error: " + ev.message, 6000);
+      }, aborter.signal);
+    } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
+    finally { el.classList.remove("loading"); $(".prog", el).textContent = ""; setBusy(false); aborter = null; }
+  }
+  // cross-frame drag (element from screen A dropped into screen B)
+  function startXDrag(from, html, desc) {
+    xdrag = { from, html, desc }; document.body.classList.add("xdrag");
+    const g = $("#dragGhost"); g.textContent = "⇢ " + desc; g.classList.remove("hidden");
+  }
+  function cancelXDrag(notify = true) { if (!xdrag) return; if (notify) postFrame(xdrag.from, { type: "dragcancel" }); xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); $$(".frame.droptarget").forEach(f => f.classList.remove("droptarget")); }
+  window.addEventListener("pointermove", e => {
+    if (pendingDrag && !xdrag) { postFrame(pendingDrag, { type: "dragout-request" }); pendingDrag = null; }
+    if (!xdrag) return;
+    const g = $("#dragGhost"); g.style.left = e.clientX + "px"; g.style.top = e.clientY + "px";
+    const fr = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains("frame"));
+    $$(".frame.droptarget").forEach(f => { if (f !== fr) f.classList.remove("droptarget"); }); if (fr && fr.dataset.id !== xdrag.from) fr.classList.add("droptarget");
+  });
+  window.addEventListener("pointerup", e => {
+    if (!xdrag) return;
+    const fr = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains("frame"));
+    if (fr && fr.dataset.id !== xdrag.from) {
+      const r = $("iframe", fr).getBoundingClientRect(), z = project.camera.z;
+      postFrame(fr.dataset.id, { type: "drop", html: xdrag.html, x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z });
+      postFrame(xdrag.from, { type: "dragcancel" }); select(fr.dataset.id);
+      xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); fr.classList.remove("droptarget");
+    } else cancelXDrag(true);
+  });
+  window.addEventListener("keydown", e => { if (e.key === "Escape" && xdrag) cancelXDrag(true); });
+
+  let playing = null;
+  function playNavigate() {}
+  function drawArrows() {}
 
   // ------------------------------------------------------------ design system
   const dsDlg = $("#dsDlg");

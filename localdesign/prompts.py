@@ -38,6 +38,22 @@ Apply this change: {instruction}
 
 Keep everything else the same (same design system, same content) unless the change requires otherwise. Return the complete updated HTML document only."""
 
+ELEMENT_ITERATE = """You are editing ONE element inside an existing screen. The page's CSS (variables and relevant rules) is:
+
+```css
+{css}
+```
+
+The element to change:
+
+```html
+{html}
+```
+
+Apply this change: {instruction}
+
+Return ONLY the replacement HTML for this element (the same element, modified, or what should take its place). Keep its classes and structure unless the change requires otherwise. If you need new CSS rules, put them in a <style> tag immediately before the element. No explanation, no markdown fences, no full-page HTML."""
+
 CDN_RULE_ALLOWED = ". Exception: you MAY load Tailwind via <script src=\"https://cdn.tailwindcss.com\"></script> and Google Fonts via <link>"
 
 
@@ -153,3 +169,20 @@ def data_prompt(data: dict | None, for_spec: bool) -> str:
     if for_spec:
         parts.append('In table/list nodes you may set "data": "<source name>" to have all rows filled in automatically.')
     return "\n".join(parts)
+
+
+def extract_fragment(text: str) -> str:
+    """Pull an HTML fragment (one or more elements) out of a reply."""
+    m = _FENCE.search(text)
+    if m and "<" in m.group(1):
+        text = m.group(1)
+    i, j = text.find("<"), text.rfind(">")
+    if i < 0 or j < 0:
+        return ""
+    frag = text[i: j + 1].strip()
+    # the model sometimes wraps in a full document anyway
+    b = re.search(r"<body[^>]*>(.*)</body>", frag, re.S | re.I)
+    if b:
+        st = re.findall(r"<style[^>]*>.*?</style>", frag, re.S | re.I)
+        frag = "".join(st) + b.group(1).strip()
+    return frag
