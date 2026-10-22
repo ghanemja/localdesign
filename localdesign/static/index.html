@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>localdesign</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111'/%3E%3Crect x='7' y='7' width='8' height='8' rx='2' fill='%23fff'/%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%23fff' opacity='.5'/%3E%3Crect x='7' y='17' width='18' height='8' rx='2' fill='%23fff' opacity='.8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="left">
+    <div class="logo">localdesign</div>
+    <button class="ghost" id="projectsBtn" title="Projects">▾</button>
+    <input id="projectName" class="name" value="Untitled" spellcheck="false">
+    <span id="saveState" class="muted"></span>
+  </div>
+  <div class="center">
+    <div class="seg" id="deviceSeg">
+      <button data-w="1280" class="on" title="Desktop 1280">Desktop</button>
+      <button data-w="768" title="Tablet 768">Tablet</button>
+      <button data-w="390" title="Phone 390">Phone</button>
+    </div>
+  </div>
+  <div class="right">
+    <div class="seg">
+      <button id="zoomOut" title="Zoom out (⌘-)">−</button>
+      <button id="zoomLabel" title="Reset zoom">100%</button>
+      <button id="zoomIn" title="Zoom in (⌘+)">+</button>
+    </div>
+    <button class="ghost" id="fitBtn" title="Fit all (⇧1)">Fit</button>
+    <button class="ghost" id="exportBtn" title="Export project JSON">Export</button>
+    <button class="ghost" id="settingsBtn" title="Settings"><span id="modelDot" class="dot"></span><span id="modelLabel">…</span></button>
+  </div>
+</header>
+
+<main id="viewport">
+  <div id="canvas"></div>
+  <div id="empty" class="empty">
+    <h1>Describe a screen.</h1>
+    <p>“A dashboard for a solar-panel fleet operator — map, alerts, daily output chart.”<br>
+       “Onboarding flow for a meditation app, step 2 of 4, phone.”<br>
+       “Pricing page for a B2B invoicing SaaS, three tiers.”</p>
+    <p class="muted">Variants appear on the canvas. Click one and type to iterate on it.<br>Drag to pan · ⌘/Ctrl + scroll to zoom · Space + drag to pan</p>
+  </div>
+</main>
+
+<form id="promptBar" autocomplete="off">
+  <div id="targetChip" class="chip hidden">Editing <b id="targetName"></b> <button type="button" id="clearTarget" title="Deselect (Esc)">×</button></div>
+  <textarea id="prompt" rows="1" placeholder="Describe a screen to design…"></textarea>
+  <div class="row">
+    <span id="status" class="muted"></span>
+    <label class="muted">variants
+      <select id="variants"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>6</option></select>
+    </label>
+    <span class="grow"></span>
+    <button type="button" id="stopBtn" class="ghost hidden">Stop</button>
+    <button type="submit" id="goBtn">Generate <kbd>⏎</kbd></button>
+  </div>
+</form>
+
+<!-- Settings -->
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <h2>Model &amp; endpoint</h2>
+    <label>Provider preset
+      <select name="provider" id="providerSel"></select>
+    </label>
+    <label>Base URL <input name="base_url" placeholder="http://localhost:11434/v1 or https://llm.internal.corp/v1"></label>
+    <label>Model
+      <div class="inline">
+        <input name="model" list="modelList" placeholder="model id">
+        <datalist id="modelList"></datalist>
+        <button type="button" id="fetchModels" class="ghost">Fetch</button>
+      </div>
+      <span id="modelsMsg" class="muted small"></span>
+    </label>
+    <label>API key <input name="api_key" type="password" placeholder="leave blank to keep current"><span id="keyState" class="muted small"></span></label>
+    <label>Reasoning effort (Anthropic) <select name="effort"><option value="low">low — fastest (default)</option><option value="medium">medium</option><option value="high">high — slower, deeper</option></select></label>
+    <div class="two">
+      <label>Temperature <input name="temperature" type="number" step="0.1" min="0" max="2"></label>
+      <label>Max tokens <input name="max_tokens" type="number" step="512" min="1024"></label>
+    </div>
+    <label class="check"><input name="allow_cdn" type="checkbox"> Allow generated screens to load Tailwind / Google Fonts from the internet (off = fully offline)</label>
+    <p class="muted small">Env overrides for internal endpoints: <code>LD_BASE_URL</code>, <code>LD_MODEL</code>, <code>LD_API_KEY</code>. Config saved to <code>~/.localdesign/config.json</code>.</p>
+    <menu>
+      <button type="button" class="ghost" id="settingsCancel">Cancel</button>
+      <button type="submit">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- Projects -->
+<dialog id="projects">
+  <h2>Projects</h2>
+  <ul id="projectList"></ul>
+  <menu>
+    <button type="button" class="ghost" id="importBtn">Import JSON…</button>
+    <input type="file" id="importFile" accept="application/json" hidden>
+    <span class="grow"></span>
+    <button type="button" class="ghost" id="projectsClose">Close</button>
+    <button type="button" id="newProject">New project</button>
+  </menu>
+</dialog>
+
+<div id="toast" class="hidden"></div>
+
+<template id="frameTpl">
+  <div class="frame">
+    <div class="bar">
+      <span class="title" contenteditable="true" spellcheck="false"></span>
+      <span class="ver"></span>
+      <span class="prog muted"></span>
+      <span class="grow"></span>
+      <button class="ic regen" title="Regenerate">↻</button>
+      <button class="ic dup" title="Duplicate">⧉</button>
+      <button class="ic dl" title="Download HTML">↓</button>
+      <button class="ic open" title="Open in new tab">↗</button>
+      <button class="ic del" title="Delete">×</button>
+    </div>
+    <div class="body">
+      <iframe sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer"></iframe>
+      <div class="shimmer"></div>
+      <div class="err hidden"></div>
+    </div>
+  </div>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

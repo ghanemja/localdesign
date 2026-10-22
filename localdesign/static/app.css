@@ -1,0 +1,93 @@
+:root {
+  --bg: #f3f3f1; --panel: #ffffff; --ink: #141414; --muted: #767672; --line: #e2e2de;
+  --accent: #1f6feb; --accent-ink: #fff; --sel: #1f6feb; --danger: #d33;
+  --grid: #dcdcd8; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08);
+  --radius: 10px; --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #171716; --panel: #202020; --ink: #ececea; --muted: #8e8e8a; --line: #2e2e2c; --grid: #2a2a28; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5); }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 13px/1.4 var(--font); color: var(--ink); background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; }
+button:hover { border-color: var(--muted); }
+button.ghost { background: transparent; }
+button[type=submit], #goBtn, #newProject { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+button[type=submit]:disabled, #goBtn:disabled { opacity: .5; cursor: default; }
+kbd { font: 11px var(--font); opacity: .6; margin-left: 6px; }
+.muted { color: var(--muted); } .small { font-size: 12px; } .grow { flex: 1; } .hidden { display: none !important; }
+code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+
+/* top bar */
+#topbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); z-index: 5; }
+#topbar .left, #topbar .right { display: flex; align-items: center; gap: 6px; }
+#topbar .right { justify-content: flex-end; }
+.logo { font-weight: 700; letter-spacing: -.01em; margin-right: 4px; }
+.name { border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 5px 8px; min-width: 60px; width: 180px; }
+.name:hover, .name:focus { border-color: var(--line); outline: none; background: var(--bg); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 6px 10px; background: transparent; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--ink); color: var(--bg); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+.dot.ok { background: #2bb35a; } .dot.bad { background: var(--danger); }
+
+/* canvas */
+#viewport { flex: 1; position: relative; overflow: hidden; cursor: grab;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 24px 24px; }
+#viewport.panning { cursor: grabbing; }
+#canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; padding-bottom: 120px; }
+.empty h1 { font-size: 28px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 12px; }
+.empty p { margin: 0 0 14px; color: var(--muted); line-height: 1.7; max-width: 560px; }
+
+/* frames */
+.frame { position: absolute; background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); border: 2px solid transparent; display: flex; flex-direction: column; }
+.frame.selected { border-color: var(--sel); }
+.frame .bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; cursor: move; user-select: none; border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.frame .title { font-weight: 600; outline: none; padding: 1px 4px; border-radius: 4px; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.frame .title:focus { background: var(--bg); }
+.frame .ver { color: var(--muted); font-size: 11px; cursor: pointer; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); }
+.frame .ic { border: 0; background: transparent; padding: 2px 6px; border-radius: 6px; color: var(--muted); font-size: 14px; line-height: 1; }
+.frame .ic:hover { background: var(--bg); color: var(--ink); }
+.frame .ic.del:hover { color: var(--danger); }
+.frame .body { position: relative; overflow: hidden; border-radius: 0 0 var(--radius) var(--radius); background: #fff; }
+.frame iframe { display: block; border: 0; width: 100%; height: 100%; background: #fff; }
+.frame .shimmer { position: absolute; inset: 0; pointer-events: none; display: none;
+  background: linear-gradient(100deg, transparent 30%, rgba(31,111,235,.10) 50%, transparent 70%); background-size: 250% 100%; animation: sh 1.4s linear infinite; }
+.frame.loading .shimmer { display: block; }
+.frame .prog { font-size: 11px; font-variant-numeric: tabular-nums; }
+.frame.loading .prog { color: var(--accent); }
+.frame .regen { display: none; }
+.frame.failed .regen, .frame.noresult .regen { display: inline-block; }
+#status { font-size: 12px; }
+@keyframes sh { from { background-position: 150% 0 } to { background-position: -150% 0 } }
+.frame .err { position: absolute; inset: 0; padding: 16px; color: var(--danger); background: var(--panel); white-space: pre-wrap; font-size: 12px; overflow: auto; }
+
+/* prompt bar */
+#promptBar { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: min(720px, calc(100% - 32px));
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 10px 12px 10px; z-index: 6; }
+#promptBar textarea { width: 100%; border: 0; background: transparent; resize: none; outline: none; font-size: 14px; line-height: 1.45; max-height: 200px; padding: 4px 2px; }
+#promptBar .row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+#promptBar select { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 3px 4px; margin-left: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 12px; margin-bottom: 6px; }
+.chip button { border: 0; background: transparent; color: inherit; padding: 0 4px; font-size: 14px; }
+
+/* dialogs */
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); padding: 20px 22px; width: min(520px, calc(100% - 32px)); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog h2 { margin: 0 0 14px; font-size: 16px; }
+dialog label { display: block; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+dialog label input:not([type=checkbox]), dialog label select { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+dialog .inline { display: flex; gap: 6px; margin-top: 4px; } dialog .inline input { margin-top: 0; }
+dialog .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+dialog .check { display: flex; gap: 8px; align-items: flex-start; color: var(--ink); } dialog .check input { margin-top: 2px; }
+dialog menu { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin: 16px 0 0; padding: 0; }
+#projectList { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; }
+#projectList li { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-bottom: 1px solid var(--line); cursor: pointer; }
+#projectList li:hover { background: var(--bg); } #projectList li.current { font-weight: 600; }
+#projectList .meta { color: var(--muted); font-size: 12px; flex: 1; text-align: right; }
+
+#toast { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 10px; z-index: 9; max-width: 80%; white-space: pre-wrap; }
