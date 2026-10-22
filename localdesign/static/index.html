@@ -30,6 +30,8 @@
     </div>
     <button class="ghost" id="dsBtn" title="Design system: tokens and components the model must use">◫ <span id="dsLabel">Design system</span></button>
     <button class="ghost" id="dataBtn" title="Real data sources for the screens">⊞ <span id="dataLabel">Data</span></button>
+    <button class="ghost" id="flowBtn" title="Plan a whole flow (journey or PRD → linked screens)">⇶ Flow</button>
+    <button class="ghost" id="playBtn" title="Play the prototype: click linked elements to navigate">▶ Play</button>
     <button class="ghost" id="fitBtn" title="Fit all (⇧1)">Fit</button>
     <button class="ghost" id="exportBtn" title="Export project JSON">Export</button>
     <button class="ghost" id="settingsBtn" title="Settings"><span id="modelDot" class="dot"></span><span id="modelLabel">…</span></button>
@@ -37,7 +39,7 @@
 </header>
 
 <main id="viewport">
-  <div id="canvas"></div>
+  <div id="canvas"><svg id="arrows"></svg></div>
   <div id="empty" class="empty">
     <h1>Describe a screen.</h1>
     <p>“A dashboard for a solar-panel fleet operator — map, alerts, daily output chart.”<br>
@@ -171,6 +173,38 @@
   <div class="row"><span class="muted small">Links drive the prototype (▶ Play) and the flow arrows.</span><span class="grow"></span><button type="button" id="linkDone">Done</button></div>
 </div>
 <div id="dragGhost" class="hidden"></div>
+
+<!-- Flow planner -->
+<dialog id="flowDlg" class="wide">
+  <h2>Plan a flow <span class="muted small">— journey, feature, or paste a whole PRD</span></h2>
+  <label>Describe it <textarea id="flowText" rows="7" placeholder="Checkout for a meal-kit subscription: pick a plan, choose 3 recipes, delivery address, payment, confirmation with first delivery date.&#10;&#10;…or paste the PRD / ticket."></textarea></label>
+  <div class="two">
+    <label>Max screens <input id="flowMax" type="number" min="2" max="12" value="6"></label>
+    <label>&nbsp;<button type="button" id="flowPlan">Plan screens →</button></label>
+  </div>
+  <div id="flowPlanOut" class="hidden">
+    <h3>Planned screens <span class="muted small">— edit before generating</span></h3>
+    <ul id="flowList" class="plain"></ul>
+  </div>
+  <p id="flowMsg" class="muted small"></p>
+  <menu>
+    <button type="button" class="ghost" id="flowCancel">Cancel</button>
+    <span class="grow"></span>
+    <button type="button" id="flowGo" disabled>Generate all screens</button>
+  </menu>
+</dialog>
+
+<!-- Prototype player -->
+<div id="player" class="hidden">
+  <div class="pbar">
+    <button class="ghost" id="playBack" title="Back">←</button>
+    <span id="playTitle"></span>
+    <span class="grow"></span>
+    <span class="muted small" id="playHint">Click highlighted elements to navigate</span>
+    <button class="ghost" id="playClose">Close ✕</button>
+  </div>
+  <div class="pstage"><iframe id="playFrame" sandbox="allow-scripts allow-forms"></iframe></div>
+</div>
 
 <div id="toast" class="hidden"></div>
 

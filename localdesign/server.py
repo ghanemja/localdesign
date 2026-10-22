@@ -320,6 +320,29 @@ class Handler(BaseHTTPRequestHandler):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
                 threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/plan":
+            text = (body.get("text") or "").strip()
+            if not text:
+                return _json(self, {"error": "empty"}, 400)
+            with CFG_LOCK:
+                cfg = dict(CFG)
+            n = max(2, min(int(body.get("max") or 6), 12))
+            buf = ""
+            t0 = time.time()
+            try:
+                for d in llm.stream(cfg, prompts.PLAN_SYSTEM.replace("{max_screens}", str(n)), [{"role": "user", "content": prompts.plan_user_prompt(text)}], temperature=0.3):
+                    if isinstance(d, str):
+                        buf += d
+                screens = prompts.extract_json_array(buf)
+                screens = [x for x in screens if isinstance(x, dict) and x.get("title")][:n]
+                titles = {x["title"] for x in screens}
+                for x in screens:
+                    x["links"] = [l for l in (x.get("links") or []) if l in titles and l != x["title"]]
+                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": True, "screens": len(screens), "secs": round(time.time() - t0, 1)})
+                return _json(self, {"screens": screens})
+            except (llm.LLMError, ValueError, json.JSONDecodeError) as e:
+                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": False, "error": str(e)[:300]})
+                return _json(self, {"error": f"{e}", "raw": buf[:800]}, 502)
         if u.path == "/api/iterate-element":
             el_html, instruction = body.get("html") or "", (body.get("instruction") or "").strip()
             if not el_html or not instruction:

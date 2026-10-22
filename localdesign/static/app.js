@@ -117,10 +117,10 @@
       e.stopPropagation();
       const st = { x: e.clientX, y: e.clientY, sx: s.x, sy: s.y };
       const mv = ev => { s.x = st.sx + (ev.clientX - st.x) / project.camera.z; s.y = st.sy + (ev.clientY - st.y) / project.camera.z; el.style.left = s.x + "px"; el.style.top = s.y + "px"; };
-      const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); scheduleSave(); };
+      const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); scheduleSave(); drawArrows(); };
       window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
     });
-    $(".title", el).addEventListener("blur", e => { s.title = e.target.textContent.trim() || s.title; e.target.textContent = s.title; scheduleSave(); });
+    $(".title", el).addEventListener("blur", e => { s.title = e.target.textContent.trim() || s.title; e.target.textContent = s.title; scheduleSave(); drawArrows(); });
     $(".title", el).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
     $(".ver", el).addEventListener("click", e => { e.stopPropagation(); cycleVersion(s); });
     $(".dup", el).addEventListener("click", e => { e.stopPropagation(); duplicate(s); });
@@ -141,7 +141,7 @@
     emptyEl.classList.toggle("hidden", project.screens.length > 0);
     $("#projectName").value = project.name;
     $$("#deviceSeg button").forEach(b => b.classList.toggle("on", +b.dataset.w === project.device));
-    dsIndicator();
+    dsIndicator(); drawArrows();
     applyCamera();
   }
   function select(id) {
@@ -261,7 +261,7 @@
     else if (ev.type === "done") {
       s.html = ev.html; s.versions.push(ev.html); s.spec = ev.spec || null; s.specVersions = s.specVersions || []; s.specVersions.push(ev.spec || null);
       setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = ""; const er0 = $(".err", el); er0.textContent = ""; er0.classList.add("hidden");
-      renderFrame(s); scheduleSave();
+      renderFrame(s); scheduleSave(); drawArrows();
       if (ev.warning) { toast("⚠ " + s.title + ": " + ev.warning, 7000); $(".title", el).title = ev.warning; }
     } else if (ev.type === "error") {
       el.classList.remove("loading"); el.classList.add("failed"); $(".prog", el).textContent = ""; const er = $(".err", el); er.textContent = ev.message; er.classList.remove("hidden");
@@ -407,7 +407,7 @@
     if (s.spec) { s.spec = null; (s.specVersions ||= []).push(null); $(".eng", el).textContent = ""; if (!s._specWarned) { s._specWarned = true; toast("Manual edit: this screen is now plain HTML (AI edits will work on the HTML).", 4000); } }
     else if (s.specVersions) s.specVersions.push(null);
     const v = $(".ver", el); v.textContent = "v" + s.versions.length; v.style.display = s.versions.length > 1 ? "" : "none";
-    scheduleSave();
+    scheduleSave(); drawArrows();
   }
   function undoScreen(s) {
     if (!s || s.versions.length < 2) { toast("Nothing to undo", 1200); return; }
@@ -481,9 +481,94 @@
   });
   window.addEventListener("keydown", e => { if (e.key === "Escape" && xdrag) cancelXDrag(true); });
 
-  let playing = null;
-  function playNavigate() {}
-  function drawArrows() {}
+  // ------------------------------------------------------------ flows: links, arrows, prototype player
+  let playing = null;   // { id, history: [] }
+  const LINK_RE = /data-link="([^"]*)"/g;
+  function linksOf(s) { const out = new Set(); let m; LINK_RE.lastIndex = 0; while ((m = LINK_RE.exec(s.html || ""))) { const t = m[1].trim(); if (t && t !== s.title) out.add(t); } return [...out]; }
+  function screenByTitle(t) { const n = (t || "").trim().toLowerCase(); return project.screens.find(s => s.title.trim().toLowerCase() === n); }
+  function drawArrows() {
+    const svg = $("#arrows"); if (!svg) return; let out = "", labels = "";
+    for (const s of project.screens) {
+      for (const t of linksOf(s)) {
+        const d = screenByTitle(t); if (!d || d === s) continue;
+        const sh = HEIGHTS[s.width] + 36, dh = HEIGHTS[d.width] + 36;
+        const x1 = s.x + s.width, y1 = s.y + sh / 2, x2 = d.x, y2 = d.y + dh / 2;
+        const dx = Math.max(60, Math.abs(x2 - x1) / 2);
+        const back = x2 < x1 + 40;   // target is left of / overlapping source → loop over the top
+        const path = back ? `M${x1},${s.y + 20} C${x1 + 80},${s.y - 120} ${x2 - 80},${d.y - 120} ${x2},${d.y + 20}` : `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+        out += `<path d="${path}" marker-end="url(#ah)"/>`;
+      }
+    }
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="hd" d="M0,0 L10,5 L0,10 z"/></marker></defs>` + out + labels;
+    $("#playBtn").disabled = !project.screens.length;
+  }
+  function startPlay(s) {
+    if (!s) return; playing = { id: s.id, history: [] };
+    $("#player").classList.remove("hidden"); showPlayScreen(s);
+  }
+  function showPlayScreen(s) {
+    playing.id = s.id; $("#playTitle").textContent = s.title;
+    const f = $("#playFrame"); f.style.width = s.width + "px"; f.style.height = HEIGHTS[s.width] + "px";
+    f.srcdoc = withEditor(s.html);
+    $("#playBack").disabled = !playing.history.length;
+  }
+  function playNavigate(target) {
+    if (!playing) return; const d = screenByTitle(target);
+    if (!d) { toast(`No screen called “${target}” — link it or rename a screen`, 2500); return; }
+    playing.history.push(playing.id); showPlayScreen(d);
+  }
+  window.addEventListener("message", e => {   // the player iframe isn't in `frames`; handle it here
+    const m = e.data; if (!m || !m.ld || !playing) return;
+    if (e.source !== $("#playFrame").contentWindow) return;
+    if (m.type === "ready") $("#playFrame").contentWindow.postMessage({ ld: true, type: "play" }, "*");
+    else if (m.type === "navigate") playNavigate(m.target);
+  });
+  $("#playBtn").addEventListener("click", () => { const s = (selected && screenById(selected)) || project.screens[0]; if (!s || !s.html) { toast("Nothing to play yet"); return; } startPlay(s); });
+  $("#playBack").addEventListener("click", () => { if (!playing || !playing.history.length) return; const id = playing.history.pop(); const s = screenById(id); if (s) showPlayScreen(s); });
+  $("#playClose").addEventListener("click", () => { playing = null; $("#player").classList.add("hidden"); $("#playFrame").srcdoc = ""; });
+  window.addEventListener("keydown", e => { if (playing && e.key === "Escape") $("#playClose").click(); });
+
+  // flow planner: journey / PRD → screens → generate each with link context
+  const flowDlg = $("#flowDlg"); let plan = [];
+  $("#flowBtn").addEventListener("click", () => { $("#flowMsg").textContent = ""; flowDlg.showModal(); });
+  $("#flowCancel").addEventListener("click", () => flowDlg.close());
+  $("#flowPlan").addEventListener("click", async () => {
+    const text = $("#flowText").value.trim(); if (!text) { $("#flowMsg").textContent = "Describe the flow first."; return; }
+    $("#flowMsg").textContent = "planning…"; $("#flowPlan").disabled = true;
+    try {
+      const r = await fetch("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, max: +$("#flowMax").value || 6 }) });
+      const d = await r.json(); if (d.error) throw new Error(d.error);
+      plan = d.screens; renderPlan(); $("#flowMsg").textContent = `${plan.length} screens planned`; $("#flowGo").disabled = !plan.length;
+    } catch (e) { $("#flowMsg").textContent = "Planning failed: " + e.message; }
+    finally { $("#flowPlan").disabled = false; }
+  });
+  function renderPlan() {
+    const ul = $("#flowList"); ul.innerHTML = ""; $("#flowPlanOut").classList.remove("hidden");
+    plan.forEach((p, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<input value="${esc(p.title)}"><textarea rows="2">${esc(p.brief || "")}</textarea><span class="meta">→ ${esc((p.links || []).join(", ") || "no links")} · <a href="#" class="rm">remove</a></span>`;
+      li.querySelector("input").addEventListener("input", e => { p.title = e.target.value; }); li.querySelector("textarea").addEventListener("input", e => { p.brief = e.target.value; });
+      li.querySelector(".rm").addEventListener("click", e => { e.preventDefault(); plan.splice(i, 1); renderPlan(); });
+      ul.appendChild(li);
+    });
+  }
+  $("#flowGo").addEventListener("click", async () => {
+    if (!plan.length || goBtn.disabled) return; flowDlg.close();
+    const width = project.device, y = nextRowY(); const titles = plan.map(p => p.title);
+    const batch = plan.map((p, i) => ({ id: uid(), title: p.title, brief: p.brief, x: i * (width + 120), y, width, html: "", versions: [], flow: { links: p.links || [] } }));
+    project.screens.push(...batch); renderAll(); batch.forEach(s => frames.get(s.id).classList.add("loading")); fitAll();
+    aborter = new AbortController(); setBusy(true, `Generating flow (${batch.length} screens)`);
+    try {
+      for (let i = 0; i < batch.length; i++) {
+        const s = batch[i], p = plan[i];
+        const context = (projectContext([s]) || "") + "\n" + `This screen is part of a flow with these screens: ${titles.join(", ")}.\nNavigation elements that lead to another screen must carry data-link="<exact screen title>" (in spec mode: set "link" on buttons/nav items/list rows). This screen links to: ${(p.links || []).join(", ") || "none"}.`;
+        $("#status").textContent = `Flow: ${i + 1}/${batch.length} · ${s.title}`;
+        await streamPost("/api/generate", { brief: `${s.title}: ${s.brief}`, variants: 1, width, context, ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
+        if (aborter.signal.aborted) break;
+      }
+    } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
+    finally { finish(batch); drawArrows(); }
+  });
 
   // ------------------------------------------------------------ design system
   const dsDlg = $("#dsDlg");

@@ -186,3 +186,33 @@ def extract_fragment(text: str) -> str:
         st = re.findall(r"<style[^>]*>.*?</style>", frag, re.S | re.I)
         frag = "".join(st) + b.group(1).strip()
     return frag
+
+
+PLAN_SYSTEM = """You are a product designer planning the screens of a product. Given a description (a user journey, a feature request, or a full PRD), list the distinct screens needed.
+
+Output ONLY a JSON array, no prose:
+[{"title": "Short screen name", "brief": "2-4 sentences describing exactly what is on this screen: sections, key content, primary action", "links": ["Title of screen the primary action leads to", ...]}]
+
+Rules: {max_screens} screens at most; order them in the sequence a user encounters them; titles must be unique and short (2-4 words); every "links" entry must exactly match another screen's title; the first screen is the entry point."""
+
+FLOW_CONTEXT = """This screen is part of a flow with these screens: {titles}.
+Navigation: elements that lead to another screen must carry data-link="<exact screen title>" (buttons, nav items, cards, list rows). This screen should link to: {links}."""
+
+
+def plan_user_prompt(text: str) -> str:
+    return "Plan the screens for this:\n\n" + text.strip()[:12000]
+
+
+def extract_json_array(text: str):
+    m = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.S)
+    if m:
+        text = m.group(1)
+    i, j = text.find("["), text.rfind("]")
+    if i < 0:
+        raise ValueError("no JSON array in reply")
+    try:
+        return json.loads(text[i: j + 1] if j > i else text[i:])
+    except json.JSONDecodeError:
+        from .components import repair_json
+        inner = repair_json("{" + '"a":' + text[i:] + "}")
+        return json.loads(inner)["a"]

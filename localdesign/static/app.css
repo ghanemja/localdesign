@@ -129,3 +129,19 @@ ul.plain li .meta { color: var(--muted); font-size: 12px; flex: 1; }
 body.xdrag iframe { pointer-events: none; }
 body.xdrag .frame { outline: 2px dashed transparent; }
 body.xdrag .frame.droptarget { outline-color: var(--accent); }
+
+#arrows { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 1; }
+#arrows path { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .7; }
+#arrows text { font: 11px var(--font); fill: var(--accent); }
+#arrows .hd { fill: var(--accent); }
+.frame { z-index: 2; }
+#player { position: fixed; inset: 0; background: rgba(20,20,20,.92); z-index: 20; display: flex; flex-direction: column; }
+#player .pbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; color: #eee; }
+#player .pbar button { color: #eee; border-color: #444; }
+#player .pbar #playTitle { font-weight: 600; }
+#player .pstage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 0 16px 16px; }
+#player iframe { background: #fff; border: 0; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); max-width: 100%; max-height: 100%; }
+#flowList li { flex-direction: column; align-items: stretch; gap: 4px; }
+#flowList li input { width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font-weight: 600; }
+#flowList li textarea { width: 100%; font: 12px/1.4 var(--font) !important; }
+#flowList li .meta { text-align: left; }
