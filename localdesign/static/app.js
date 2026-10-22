@@ -93,6 +93,7 @@
     el.classList.toggle("selected", s.id === selected);
     $(".eng", el).textContent = s.spec ? "spec" : "";
     if (!s.html && !el.classList.contains("loading")) { el.classList.add("noresult"); const er = $(".err", el); if (!er.textContent) { er.textContent = "No result saved (page was closed mid-generation?). Click ↻ to regenerate."; er.classList.remove("hidden"); } }
+    else if (s.html && !el.classList.contains("failed")) { el.classList.remove("noresult"); const er = $(".err", el); er.textContent = ""; er.classList.add("hidden"); }
     if ($("iframe", el).dataset.html !== s.html) setFrameHTML(el, s.html);
     return el;
   }
@@ -242,7 +243,7 @@
     else if (ev.type === "partial") { delete $(".prog", el).dataset.phase; progBytes[s.id] = ev.chars || (ev.html || "").length; if (ev.html) setFrameHTML(el, ev.html); }
     else if (ev.type === "done") {
       s.html = ev.html; s.versions.push(ev.html); s.spec = ev.spec || null; s.specVersions = s.specVersions || []; s.specVersions.push(ev.spec || null);
-      setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = "";
+      setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = ""; const er0 = $(".err", el); er0.textContent = ""; er0.classList.add("hidden");
       renderFrame(s); scheduleSave();
       if (ev.warning) { toast("⚠ " + s.title + ": " + ev.warning, 7000); $(".title", el).title = ev.warning; }
     } else if (ev.type === "error") {
@@ -278,7 +279,7 @@
   });
   promptEl.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
   promptEl.addEventListener("beforeinput", e => { if (e.inputType === "insertLineBreak" || (e.inputType === "insertParagraph")) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
-  function autosize() { promptEl.style.height = "auto"; promptEl.style.height = Math.min(200, promptEl.scrollHeight) + "px"; }
+  function autosize() { if (!promptEl.value) { promptEl.style.height = ""; return; } promptEl.style.height = "auto"; promptEl.style.height = Math.min(200, promptEl.scrollHeight) + "px"; }
   promptEl.addEventListener("input", autosize);
   stopBtn.addEventListener("click", () => aborter && aborter.abort());
   $("#clearTarget").addEventListener("click", () => select(null));

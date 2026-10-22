@@ -441,8 +441,16 @@ def _rows_from_data(data, cols):
     if not isinstance(data, list) or not data:
         return [], cols
     if isinstance(data[0], dict):
-        cols = cols or list(data[0].keys())
-        return [[row.get(c, "") for c in cols] for row in data], cols
+        keys = list(data[0].keys())
+        norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())
+        if cols:
+            # map each spec column to a data key by normalized name; if fewer than half match, use the data's own keys
+            mapping = {c: next((k for k in keys if norm(k) == norm(c)), None) for c in cols}
+            if sum(1 for v in mapping.values() if v) < max(1, len(cols) // 2):
+                cols, mapping = keys, {k: k for k in keys}
+        else:
+            cols, mapping = keys, {k: k for k in keys}
+        return [[row.get(mapping.get(c) or c, "") for c in cols] for row in data], cols
     return [list(r) for r in data], cols
 
 
