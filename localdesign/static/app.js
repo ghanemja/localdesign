@@ -132,6 +132,7 @@
     emptyEl.classList.toggle("hidden", project.screens.length > 0);
     $("#projectName").value = project.name;
     $$("#deviceSeg button").forEach(b => b.classList.toggle("on", +b.dataset.w === project.device));
+    dsIndicator();
     applyCamera();
   }
   function select(id) {
@@ -354,6 +355,116 @@
     catch { toast("Not a valid project file"); }
     e.target.value = "";
   });
+
+  // ------------------------------------------------------------ design system
+  const dsDlg = $("#dsDlg");
+  let dsDraft = null;   // working copy while the dialog is open
+  function dsIndicator() {
+    const ds = project.designSystem, d = Object.keys(project.data || {}).length;
+    $("#dsLabel").textContent = ds ? (ds.name || "Design system") : "Design system"; $("#dsBtn").classList.toggle("on", !!ds);
+    $("#dataLabel").textContent = d ? `Data (${d})` : "Data"; $("#dataBtn").classList.toggle("on", d > 0);
+  }
+  function openDS() {
+    dsDraft = JSON.parse(JSON.stringify(project.designSystem || { name: "", tokens: {}, components: [], css: "", notes: "", palette: [] }));
+    $("#dsName").value = dsDraft.name || ""; $("#dsSource").value = ""; $("#dsMsg").textContent = ""; $("#dsNotes").value = dsDraft.notes || ""; $("#dsCss").value = dsDraft.css || "";
+    dsFillTokens(dsDraft.tokens || {}); dsRenderPalette(dsDraft.palette || []); dsRenderComps();
+    dsDlg.showModal();
+  }
+  function dsFillTokens(t) { $$("#dsTokens [data-t]").forEach(i => { i.value = t[i.dataset.t] ?? ""; }); }
+  function dsReadTokens() { const t = {}; $$("#dsTokens [data-t]").forEach(i => { if (i.value !== "") t[i.dataset.t] = i.type === "number" ? +i.value : i.value; }); return t; }
+  function dsRenderPalette(pal) {
+    const el = $("#dsPalette"); el.innerHTML = "";
+    for (const c of pal.slice(0, 40)) {
+      const sp = document.createElement("span"); sp.innerHTML = `<i style="background:${esc(c.value)}"></i>${esc(c.name)}`; sp.title = `${c.value} — click to set as primary, ⇧click for bg, ⌥click for text`;
+      sp.addEventListener("click", e => { const t = dsReadTokens(); t[e.shiftKey ? "bg" : e.altKey ? "text" : "primary"] = c.value; dsFillTokens(t); });
+      el.appendChild(sp);
+    }
+  }
+  function dsRenderComps() {
+    const box = $("#dsComps"); box.innerHTML = "";
+    (dsDraft.components || []).forEach((c, i) => {
+      const d = document.createElement("div"); d.className = "comp";
+      d.innerHTML = `<input placeholder="name (Button, Card…)" value="${esc(c.name || "")}"><input placeholder="when to use it" value="${esc(c.description || "")}"><button type="button" class="ic del" title="Remove">×</button><textarea rows="3" placeholder="<button class=&quot;btn btn-primary&quot;>Label</button>">${esc(c.html || "")}</textarea>`;
+      const [name, desc] = d.querySelectorAll("input"), ta = d.querySelector("textarea");
+      name.addEventListener("input", () => c.name = name.value); desc.addEventListener("input", () => c.description = desc.value); ta.addEventListener("input", () => c.html = ta.value);
+      d.querySelector(".del").addEventListener("click", () => { dsDraft.components.splice(i, 1); dsRenderComps(); });
+      box.appendChild(d);
+    });
+  }
+  $("#dsAddComp").addEventListener("click", () => { (dsDraft.components ||= []).push({ name: "", description: "", html: "" }); dsRenderComps(); });
+  $("#dsParse").addEventListener("click", async () => {
+    const text = $("#dsSource").value; if (!text.trim()) { $("#dsMsg").textContent = "Paste something first."; return; }
+    $("#dsMsg").textContent = "parsing…";
+    const r = await fetch("/api/ds/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, kind: $("#dsKind").value }) });
+    const d = await r.json(); if (d.error) { $("#dsMsg").textContent = d.error; return; }
+    const cur = dsReadTokens(); dsFillTokens({ ...cur, ...d.tokens }); dsDraft.palette = d.palette || []; dsRenderPalette(dsDraft.palette);
+    if (d.css && !$("#dsCss").value) $("#dsCss").value = d.css;
+    if (d.kind === "html") { const m = text.match(/<body[^>]*>([\s\S]*)<\/body>/i); if (m && !(dsDraft.components || []).length) { (dsDraft.components ||= []).push({ name: "Reference page", description: "match this markup style", html: m[1].trim().slice(0, 4000) }); dsRenderComps(); } }
+    $("#dsMsg").textContent = `${d.kind}: ${Object.keys(d.tokens).length} tokens, ${(d.palette || []).length} colors found — adjust below`;
+  });
+  $("#dsSave").addEventListener("click", async () => {
+    dsDraft.name = $("#dsName").value.trim(); dsDraft.tokens = dsReadTokens(); dsDraft.notes = $("#dsNotes").value.trim(); dsDraft.css = $("#dsCss").value.trim();
+    dsDraft.components = (dsDraft.components || []).filter(c => c.html && c.html.trim());
+    project.designSystem = dsDraft; dsDlg.close(); dsIndicator(); scheduleSave();
+    await rerenderSpecScreens(); toast("Design system saved" + (project.designSystem.name ? ": " + project.designSystem.name : ""));
+  });
+  $("#dsClear").addEventListener("click", async () => { project.designSystem = null; dsDlg.close(); dsIndicator(); scheduleSave(); await rerenderSpecScreens(); });
+  $("#dsCancel").addEventListener("click", () => dsDlg.close());
+  $("#dsBtn").addEventListener("click", openDS);
+  async function rerenderSpecScreens() {
+    const specScreens = project.screens.filter(s => s.spec);
+    for (const s of specScreens) {
+      try {
+        const r = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec: s.spec, width: s.width, design_system: project.designSystem || undefined, data: project.data }) });
+        const d = await r.json(); if (d.html) { s.html = d.html; s.versions[s.versions.length - 1] = d.html; setFrameHTML(frames.get(s.id), d.html); }
+      } catch {}
+    }
+    if (specScreens.length) scheduleSave();
+  }
+
+  // ------------------------------------------------------------ data sources
+  const dataDlg = $("#dataDlg");
+  function parseCSV(text) {
+    const delim = text.indexOf("\t") >= 0 && text.indexOf(",") < 0 ? "\t" : ",";
+    const rows = []; let row = [], cell = "", q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+      else if (ch === '"') q = true;
+      else if (ch === delim) { row.push(cell); cell = ""; }
+      else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+      else cell += ch;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+    const [head, ...body] = rows.filter(r => r.some(c => c.trim() !== ""));
+    if (!head) return [];
+    return body.map(r => Object.fromEntries(head.map((h, i) => [h.trim(), (r[i] ?? "").trim()])));
+  }
+  function dataRenderList() {
+    const ul = $("#dataList"); ul.innerHTML = "";
+    const names = Object.keys(project.data || {});
+    if (!names.length) ul.innerHTML = "<li class='muted'>No sources yet.</li>";
+    for (const n of names) {
+      const rows = project.data[n]; const cols = Array.isArray(rows) && rows[0] && typeof rows[0] === "object" ? Object.keys(rows[0]) : [];
+      const li = document.createElement("li"); li.innerHTML = `<b>${esc(n)}</b><span class="meta">${Array.isArray(rows) ? rows.length : 1} rows · ${esc(cols.slice(0, 6).join(", "))}${cols.length > 6 ? "…" : ""}</span><button class="ic del" title="Remove">×</button>`;
+      li.querySelector(".del").addEventListener("click", () => { delete project.data[n]; dataRenderList(); dsIndicator(); scheduleSave(); });
+      ul.appendChild(li);
+    }
+  }
+  $("#dataAdd").addEventListener("click", () => {
+    const name = $("#dataName").value.trim().replace(/\s+/g, "_"), text = $("#dataSource").value.trim(); let kind = $("#dataKind").value;
+    if (!name || !text) { $("#dataMsg").textContent = "Need a name and some rows."; return; }
+    if (kind === "auto") kind = /^[\[{]/.test(text) ? "json" : "csv";
+    let rows;
+    try { rows = kind === "json" ? JSON.parse(text) : parseCSV(text); } catch (e) { $("#dataMsg").textContent = "Could not parse: " + e.message; return; }
+    if (rows && !Array.isArray(rows) && typeof rows === "object") rows = rows.rows || rows.data || rows.items || [rows];
+    if (!Array.isArray(rows) || !rows.length) { $("#dataMsg").textContent = "No rows found."; return; }
+    if (rows.length > 500) rows = rows.slice(0, 500);
+    (project.data ||= {})[name] = rows; $("#dataName").value = ""; $("#dataSource").value = ""; $("#dataMsg").textContent = `added ${name} (${rows.length} rows)`;
+    dataRenderList(); dsIndicator(); scheduleSave(); rerenderSpecScreens();
+  });
+  $("#dataBtn").addEventListener("click", () => { dataRenderList(); $("#dataMsg").textContent = ""; dataDlg.showModal(); });
+  $("#dataClose").addEventListener("click", () => dataDlg.close());
 
   // ------------------------------------------------------------ settings
   const dlg = $("#settings"), form = $("#settingsForm");

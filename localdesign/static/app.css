@@ -93,3 +93,20 @@ dialog menu { display: flex; gap: 8px; justify-content: flex-end; align-items: c
 #projectList .meta { color: var(--muted); font-size: 12px; flex: 1; text-align: right; }
 
 #toast { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 10px; z-index: 9; max-width: 80%; white-space: pre-wrap; }
+
+dialog.wide { width: min(760px, calc(100% - 32px)); max-height: 90vh; overflow: auto; }
+dialog h3 { font-size: 13px; margin: 16px 0 8px; }
+dialog label textarea { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+dialog .row { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.tokens { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.tokens label { margin: 0; }
+.tokens input, .tokens select { padding: 5px 7px !important; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.palette span { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px 2px 2px; cursor: pointer; }
+.palette i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.1); }
+.comp { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px; align-items: start; }
+.comp textarea { grid-column: 1 / -1; }
+ul.plain { list-style: none; margin: 0 0 12px; padding: 0; }
+ul.plain li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+ul.plain li .meta { color: var(--muted); font-size: 12px; flex: 1; }
+#dsBtn.on, #dataBtn.on { border-color: var(--accent); color: var(--accent); }

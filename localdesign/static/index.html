@@ -28,6 +28,8 @@
       <button id="zoomLabel" title="Reset zoom">100%</button>
       <button id="zoomIn" title="Zoom in (⌘+)">+</button>
     </div>
+    <button class="ghost" id="dsBtn" title="Design system: tokens and components the model must use">◫ <span id="dsLabel">Design system</span></button>
+    <button class="ghost" id="dataBtn" title="Real data sources for the screens">⊞ <span id="dataLabel">Data</span></button>
     <button class="ghost" id="fitBtn" title="Fit all (⇧1)">Fit</button>
     <button class="ghost" id="exportBtn" title="Export project JSON">Export</button>
     <button class="ghost" id="settingsBtn" title="Settings"><span id="modelDot" class="dot"></span><span id="modelLabel">…</span></button>
@@ -104,6 +106,53 @@
     <button type="button" class="ghost" id="projectsClose">Close</button>
     <button type="button" id="newProject">New project</button>
   </menu>
+</dialog>
+
+<!-- Design system -->
+<dialog id="dsDlg" class="wide">
+  <h2>Design system <span class="muted small">— generate with <i>your</i> tokens and components</span></h2>
+  <div class="two">
+    <label>Name <input id="dsName" placeholder="Acme UI"></label>
+    <label>Import from
+      <select id="dsKind"><option value="auto">auto-detect</option><option value="css">CSS variables (:root)</option><option value="tailwind">tailwind.config.js</option><option value="tokens">Design tokens JSON</option><option value="html">HTML page / component</option></select>
+    </label>
+  </div>
+  <label>Paste source <textarea id="dsSource" rows="6" placeholder=":root { --brand: #5b4bff; --bg: #f7f7fb; ... }   or   module.exports = { theme: { extend: { colors: {...} } } }   or   { &quot;color&quot;: { &quot;primary&quot;: { &quot;$value&quot;: &quot;#…&quot; } } }"></textarea></label>
+  <div class="row"><button type="button" class="ghost" id="dsParse">Parse →</button><span id="dsMsg" class="muted small"></span></div>
+  <h3>Tokens</h3>
+  <div class="tokens" id="dsTokens">
+    <label>primary <input data-t="primary" type="text"></label><label>accent <input data-t="accent" type="text"></label>
+    <label>bg <input data-t="bg" type="text"></label><label>surface <input data-t="surface" type="text"></label>
+    <label>text <input data-t="text" type="text"></label><label>muted <input data-t="muted" type="text"></label>
+    <label>line <input data-t="line" type="text"></label><label>theme <select data-t="theme"><option value="">auto</option><option>light</option><option>dark</option></select></label>
+    <label>font <input data-t="font" type="text" placeholder="Inter, system-ui"></label><label>radius <input data-t="radius" type="number" min="0" max="32"></label>
+  </div>
+  <div id="dsPalette" class="palette"></div>
+  <label>Guidelines for the model (voice, spacing rules, do/don't) <textarea id="dsNotes" rows="2" placeholder="Buttons are always pill-shaped. Never use pure black. Titles in sentence case."></textarea></label>
+  <h3>Components <span class="muted small">— exact markup the model should reuse (HTML engine)</span></h3>
+  <div id="dsComps"></div>
+  <div class="row"><button type="button" class="ghost" id="dsAddComp">+ Add component</button></div>
+  <label>Extra CSS included verbatim in every screen <textarea id="dsCss" rows="3" placeholder=".btn { … }  .card { … }"></textarea></label>
+  <menu>
+    <button type="button" class="ghost" id="dsClear">Remove design system</button>
+    <span class="grow"></span>
+    <button type="button" class="ghost" id="dsCancel">Cancel</button>
+    <button type="button" id="dsSave">Save &amp; re-render spec screens</button>
+  </menu>
+</dialog>
+
+<!-- Data sources -->
+<dialog id="dataDlg" class="wide">
+  <h2>Data sources <span class="muted small">— screens use real rows, not lorem</span></h2>
+  <ul id="dataList" class="plain"></ul>
+  <div class="two">
+    <label>Source name <input id="dataName" placeholder="orders"></label>
+    <label>Format <select id="dataKind"><option value="auto">auto</option><option value="json">JSON</option><option value="csv">CSV / TSV</option></select></label>
+  </div>
+  <label>Paste rows <textarea id="dataSource" rows="6" placeholder='[{"order":"#1042","customer":"Mara L.","total":"$412.60","status":"Paid"}, …]   or   order,customer,total,status&#10;#1042,Mara L.,$412.60,Paid'></textarea></label>
+  <div class="row"><button type="button" class="ghost" id="dataAdd">Add source</button><span id="dataMsg" class="muted small"></span></div>
+  <p class="muted small">In the brief, mention the source by name ("table of orders"). Spec-engine tables and lists fill all rows automatically; the HTML engine gets the first 12 rows as examples.</p>
+  <menu><span class="grow"></span><button type="button" id="dataClose">Done</button></menu>
 </dialog>
 
 <div id="toast" class="hidden"></div>

@@ -223,6 +223,9 @@ def _tokens_css(t: dict, ds: dict | None = None) -> str:
         pal = dict(bg=_color(t.get("bg"), "#f6f7f9"), surface=_color(t.get("surface"), "#ffffff"), text=_color(t.get("text"), "#121417"), muted="#6b7280", line="#e5e7eb", chip="#f1f3f6",
                    side_bg="#ffffff", side_text="#121417", side_muted="#6b7280", side_active="#eef2ff",
                    ok="#15803d", ok_bg="#dcfce7", bad="#b91c1c", bad_bg="#fee2e2", warn="#b45309", warn_bg="#fef3c7", info_bg="#e0e7ff")
+    for k in ("muted", "line", "chip", "ok", "bad", "warn"):
+        if t.get(k):
+            pal[k] = _color(t[k], pal[k])
     fs = 13 if compact else 14
     return f""":root{{--primary:{primary};--accent:{accent};--bg:{pal['bg']};--surface:{pal['surface']};--text:{pal['text']};--muted:{pal['muted']};--line:{pal['line']};--chip:{pal['chip']};
 --side-bg:{pal['side_bg']};--side-text:{pal['side_text']};--side-muted:{pal['side_muted']};--side-active:{pal['side_active']};

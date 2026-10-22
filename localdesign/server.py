@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, components, config, llm, prompts
+from . import __version__, components, config, designsystem, llm, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -313,6 +313,11 @@ class Handler(BaseHTTPRequestHandler):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
                 threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/ds/parse":
+            try:
+                return _json(self, designsystem.parse(str(body.get("text") or ""), body.get("kind") or "auto"))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
         if u.path == "/api/render":   # re-render a spec locally (no model call): used after design-system/data edits
             spec = body.get("spec")
             if not isinstance(spec, dict):
