@@ -53,6 +53,9 @@
     <label class="muted">variants
       <select id="variants"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>6</option></select>
     </label>
+    <label class="muted" title="html: the model writes the whole page (best with strong models). spec: the model writes a compact JSON layout and localdesign renders it (reliable with small local models).">engine
+      <select id="engine"><option value="auto" selected>auto</option><option value="html">html</option><option value="spec">spec</option></select>
+    </label>
     <span class="grow"></span>
     <button type="button" id="stopBtn" class="ghost hidden">Stop</button>
     <button type="submit" id="goBtn">Generate <kbd>⏎</kbd></button>
@@ -110,6 +113,7 @@
     <div class="bar">
       <span class="title" contenteditable="true" spellcheck="false"></span>
       <span class="ver"></span>
+      <span class="eng muted" title="Generated from a JSON spec rendered by localdesign"></span>
       <span class="prog muted"></span>
       <span class="grow"></span>
       <button class="ic regen" title="Regenerate">↻</button>

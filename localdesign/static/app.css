@@ -58,6 +58,8 @@ code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 
 .frame .shimmer { position: absolute; inset: 0; pointer-events: none; display: none;
   background: linear-gradient(100deg, transparent 30%, rgba(31,111,235,.10) 50%, transparent 70%); background-size: 250% 100%; animation: sh 1.4s linear infinite; }
 .frame.loading .shimmer { display: block; }
+.frame .eng { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+.frame .eng:empty { display: none; }
 .frame .prog { font-size: 11px; font-variant-numeric: tabular-nums; }
 .frame.loading .prog { color: var(--accent); }
 .frame .regen { display: none; }

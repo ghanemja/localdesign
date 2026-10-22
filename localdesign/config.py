@@ -45,7 +45,10 @@ def load() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     # env overrides (handy for internal endpoints: LD_BASE_URL=https://llm.corp/v1 LD_MODEL=... LD_API_KEY=...)
-    for key, env in (("provider", "LD_PROVIDER"), ("base_url", "LD_BASE_URL"), ("model", "LD_MODEL"), ("api_key", "LD_API_KEY"), ("api", "LD_API")):
+    env_provider = os.environ.get("LD_PROVIDER")
+    if env_provider and env_provider != cfg.get("provider"):
+        apply_preset(cfg, env_provider)          # switch endpoint/key/model to that preset, then let LD_* refine
+    for key, env in (("base_url", "LD_BASE_URL"), ("model", "LD_MODEL"), ("api_key", "LD_API_KEY"), ("api", "LD_API")):
         if os.environ.get(env):
             cfg[key] = os.environ[env]
     p = PRESETS.get(cfg["provider"], {})

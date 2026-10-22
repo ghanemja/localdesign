@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, config, llm, prompts
+from . import __version__, components, config, llm, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -53,25 +53,53 @@ def _read_json(h) -> dict:
 
 
 # ------------------------------------------------------------------ generation
-def _run_variant(cfg, idx, brief, context, width, direction, q: queue.Queue):
-    sys_p = prompts.system_prompt(width, direction, cfg.get("allow_cdn", False))
-    msgs = [{"role": "user", "content": prompts.generate_user_prompt(brief, context)}]
-    _stream_to_queue(cfg, idx, sys_p, msgs, q)
+LOCAL_PROVIDERS = {"ollama", "lmstudio", "llamacpp", "vllm", "custom"}
+_BIG = re.compile(r"(?<![0-9.])([3-9][0-9]|[1-9][0-9]{2,})b\b", re.I)   # 30b, 70b, 120b, 405b…
 
 
-def _run_iterate(cfg, idx, html, instruction, width, q: queue.Queue):
+def resolve_mode(cfg: dict, requested: str | None) -> str:
+    """html = model writes the page; spec = model writes JSON, we render. auto: spec for small local models."""
+    m = (requested or cfg.get("mode") or "auto").lower()
+    if m in ("html", "spec"):
+        return m
+    if cfg.get("provider") in LOCAL_PROVIDERS and not _BIG.search(cfg.get("model") or ""):
+        return "spec"
+    return "html"
+
+
+def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None):
+    for_spec = mode == "spec"
+    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec)) if x)
+    user = prompts.generate_user_prompt(brief, context) + ("\n\n" + extra if extra else "")
+    if for_spec:
+        sys_p = prompts.spec_system_prompt(width, direction)
+    else:
+        sys_p = prompts.system_prompt(width, direction, cfg.get("allow_cdn", False))
+    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, mode=mode, width=width, ds=ds, data=data)
+
+
+def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None):
+    if spec:
+        sys_p = prompts.spec_system_prompt(width, None)
+        extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, True), prompts.data_prompt(data, True)) if x)
+        user = prompts.SPEC_ITERATE.format(spec=json.dumps(spec, separators=(",", ":")), instruction=instruction) + ("\n\n" + extra if extra else "")
+        _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, temperature=0.4, kind="iterate", mode="spec", width=width, ds=ds, data=data)
+        return
     sys_p = prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
-    msgs = [{"role": "user", "content": prompts.ITERATE.format(html=html, instruction=instruction)}]
+    extra = prompts.design_system_prompt(ds, False)
+    msgs = [{"role": "user", "content": prompts.ITERATE.format(html=html, instruction=instruction) + ("\n\n" + extra if extra else "")}]
     _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=0.4, kind="iterate")
 
 
-def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"):
+def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate", mode="html", width=1280, ds=None, data=None):
     buf = ""
     last = 0.0
     t0 = time.time()
-    rec = {"kind": kind, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
+    rec = {"kind": kind, "mode": mode, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
            "prompt_chars": len(sys_p) + sum(len(m.get("content", "")) for m in msgs),
            "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300]}
+    render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else prompts.partial_html
+    interval = 1.0 if mode == "spec" else 0.25
     try:
         thinking_sent = False
         for delta in llm.stream(cfg, sys_p, msgs, temperature=temperature):
@@ -82,13 +110,13 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
                 continue
             buf += delta
             now = time.time()
-            if now - last > 0.25:
-                q.put({"type": "partial", "i": idx, "html": prompts.partial_html(buf)})
+            if now - last > interval:
+                q.put({"type": "partial", "i": idx, "html": render(buf), "chars": len(buf)})
                 last = now
-        _finish(q, idx, buf)
+        _finish(q, idx, buf, mode=mode, width=width, ds=ds, data=data)
         audit({**rec, "ok": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
     except llm.Truncated as e:
-        _finish(q, idx, buf, warning=str(e))
+        _finish(q, idx, buf, warning=str(e), mode=mode, width=width, ds=ds, data=data)
         audit({**rec, "ok": True, "truncated": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
     except llm.LLMError as e:
         q.put({"type": "error", "i": idx, "message": str(e)})
@@ -98,12 +126,33 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
         audit({**rec, "ok": False, "error": f"{type(e).__name__}: {e}"[:300], "secs": round(time.time() - t0, 1)})
 
 
-def _finish(q, idx, buf, warning=None):
-    html = prompts.extract_html(buf)
-    if "<" not in html:
-        q.put({"type": "error", "i": idx, "message": (warning + "\n\n" if warning else "") + "Model returned no HTML:\n" + buf[:500]})
-        return
-    ev = {"type": "done", "i": idx, "html": html}
+def _spec_partial(text: str, width: int, ds, data) -> str:
+    try:
+        spec = json.loads(components.repair_json(text))
+    except (ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(spec, dict) or not spec.get("sections"):
+        return ""
+    return components.render(spec, width, ds, data)
+
+
+def _finish(q, idx, buf, warning=None, mode="html", width=1280, ds=None, data=None):
+    if mode == "spec":
+        try:
+            spec = components.extract_json(buf)
+        except (ValueError, json.JSONDecodeError) as e:
+            q.put({"type": "error", "i": idx, "message": (warning + "\n\n" if warning else "") + f"Model returned no usable JSON spec ({e}):\n" + buf[:600]})
+            return
+        if not isinstance(spec, dict) or not spec.get("sections"):
+            q.put({"type": "error", "i": idx, "message": "Spec had no sections:\n" + buf[:600]})
+            return
+        ev = {"type": "done", "i": idx, "html": components.render(spec, width, ds, data), "spec": spec, "mode": "spec"}
+    else:
+        html = prompts.extract_html(buf)
+        if "<" not in html:
+            q.put({"type": "error", "i": idx, "message": (warning + "\n\n" if warning else "") + "Model returned no HTML:\n" + buf[:500]})
+            return
+        ev = {"type": "done", "i": idx, "html": html, "mode": "html"}
     if warning:
         ev["warning"] = warning
     q.put(ev)
@@ -183,7 +232,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204); self.end_headers(); return
         if u.path == "/api/config":
             with CFG_LOCK:
-                return _json(self, config.public(CFG))
+                out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None)
+                return _json(self, out)
         if u.path == "/api/models":
             try:
                 with CFG_LOCK:
@@ -256,11 +306,18 @@ class Handler(BaseHTTPRequestHandler):
             n = max(1, min(int(body.get("variants") or cfg.get("variants", 3)), 6))
             width = int(body.get("width") or 1280)
             context = body.get("context") or None
+            mode = resolve_mode(cfg, body.get("mode"))
+            ds, data = body.get("design_system") or None, body.get("data") or None
             q: queue.Queue = queue.Queue()
             for i in range(n):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
-                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q), daemon=True).start()
+                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/render":   # re-render a spec locally (no model call): used after design-system/data edits
+            spec = body.get("spec")
+            if not isinstance(spec, dict):
+                return _json(self, {"error": "need spec"}, 400)
+            return _json(self, {"html": components.render(spec, int(body.get("width") or 1280), body.get("design_system") or None, body.get("data") or None)})
         if u.path == "/api/iterate":
             html, instruction = body.get("html") or "", (body.get("instruction") or "").strip()
             if not html or not instruction:
@@ -269,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = dict(CFG)
             width = int(body.get("width") or 1280)
             q: queue.Queue = queue.Queue()
-            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q), daemon=True).start()
+            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None), daemon=True).start()
             return _sse_multiplex(self, q, 1)
         if u.path == "/api/projects":
             pid = body.get("id") or uuid.uuid4().hex[:10]

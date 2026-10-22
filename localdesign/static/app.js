@@ -6,7 +6,8 @@
   const HEIGHTS = { 1280: 800, 768: 1024, 390: 844 };
 
   // ------------------------------------------------------------ state
-  let project = { id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 } };
+  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {} });
+  let project = blankProject();
   let selected = null;           // screen id
   let cfg = {};
   let aborter = null;
@@ -90,6 +91,7 @@
     const v = $(".ver", el); v.textContent = "v" + (s.versions.length); v.title = s.versions.length > 1 ? "Click to switch version" : "";
     v.style.display = s.versions.length > 1 ? "" : "none";
     el.classList.toggle("selected", s.id === selected);
+    $(".eng", el).textContent = s.spec ? "spec" : "";
     if (!s.html && !el.classList.contains("loading")) { el.classList.add("noresult"); const er = $(".err", el); if (!er.textContent) { er.textContent = "No result saved (page was closed mid-generation?). Click ↻ to regenerate."; er.classList.remove("hidden"); } }
     if ($("iframe", el).dataset.html !== s.html) setFrameHTML(el, s.html);
     return el;
@@ -121,7 +123,7 @@
   function cycleVersion(s) {
     const i = s.versions.indexOf(s.html);
     const next = s.versions[(i + 1) % s.versions.length];
-    s.html = next; const el = frames.get(s.id); setFrameHTML(el, next);
+    s.html = next; if (s.specVersions) s.spec = s.specVersions[s.versions.indexOf(next)] || null; const el = frames.get(s.id); setFrameHTML(el, next); $(".eng", el).textContent = s.spec ? "spec" : "";
     $(".ver", el).textContent = "v" + (s.versions.indexOf(next) + 1); toast(`Showing v${s.versions.indexOf(next) + 1} of ${s.versions.length}`, 1200); scheduleSave();
   }
   function renderAll() {
@@ -171,6 +173,7 @@
   }
 
   // ------------------------------------------------------------ generate / iterate
+  const genExtras = () => ({ mode: $("#engine").value, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined });
   let progTimer = null, progStart = 0, progBytes = {};
   function setBusy(b, label) {
     goBtn.disabled = b; stopBtn.classList.toggle("hidden", !b);
@@ -205,7 +208,7 @@
     const context = projectContext(batch);
     aborter = new AbortController(); setBusy(true, `Generating ${n} variant${n > 1 ? "s" : ""}`);
     try {
-      await streamPost("/api/generate", { brief, variants: n, width, context }, ev => handleEvent(ev, batch), aborter.signal);
+      await streamPost("/api/generate", { brief, variants: n, width, context, ...genExtras() }, ev => handleEvent(ev, batch), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish(batch); }
   }
@@ -214,7 +217,7 @@
     const el = frames.get(s.id); el.classList.add("loading");
     const prev = s.html; aborter = new AbortController(); setBusy(true, "Applying change");
     try {
-      await streamPost("/api/iterate", { html: prev, instruction, width: s.width }, ev => handleEvent(ev, [s]), aborter.signal);
+      await streamPost("/api/iterate", { html: prev, instruction, width: s.width, spec: s.spec || undefined, ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish([s]); }
   }
@@ -226,7 +229,7 @@
     const brief = s.brief || s.title;
     aborter = new AbortController(); setBusy(true, "Regenerating");
     try {
-      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context: projectContext([s]) }, ev => handleEvent(ev, [s]), aborter.signal);
+      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context: projectContext([s]), ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish([s]); }
   }
@@ -235,9 +238,10 @@
     const s = batch[ev.i]; if (!s) return;
     const el = frames.get(s.id); if (!el) return;
     if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
-    else if (ev.type === "partial") { delete $(".prog", el).dataset.phase; progBytes[s.id] = (ev.html || "").length; if (ev.html) setFrameHTML(el, ev.html); }
+    else if (ev.type === "partial") { delete $(".prog", el).dataset.phase; progBytes[s.id] = ev.chars || (ev.html || "").length; if (ev.html) setFrameHTML(el, ev.html); }
     else if (ev.type === "done") {
-      s.html = ev.html; s.versions.push(ev.html); setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = "";
+      s.html = ev.html; s.versions.push(ev.html); s.spec = ev.spec || null; s.specVersions = s.specVersions || []; s.specVersions.push(ev.spec || null);
+      setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = "";
       renderFrame(s); scheduleSave();
       if (ev.warning) { toast("⚠ " + s.title + ": " + ev.warning, 7000); $(".title", el).title = ev.warning; }
     } else if (ev.type === "error") {
@@ -277,6 +281,7 @@
   promptEl.addEventListener("input", autosize);
   stopBtn.addEventListener("click", () => aborter && aborter.abort());
   $("#clearTarget").addEventListener("click", () => select(null));
+  $("#engine").addEventListener("change", e => postConfig({ mode: e.target.value }));
 
   // ------------------------------------------------------------ toolbar
   $("#zoomIn").addEventListener("click", () => zoomAt(1.25, viewport.clientWidth / 2, viewport.clientHeight / 2));
@@ -316,11 +321,11 @@
   }
   async function loadProject(id) {
     const r = await fetch("/api/projects/" + id); if (!r.ok) return false;
-    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
+    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.data ||= {}; project.designSystem ||= null; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
     frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); localStorage.setItem("ld.last", id); return true;
   }
   function newProject() {
-    project = { id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 } };
+    project = blankProject();
     frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); localStorage.removeItem("ld.last");
   }
   async function showProjects() {
@@ -356,6 +361,8 @@
     cfg = await (await fetch("/api/config")).json();
     $("#modelLabel").textContent = cfg.model || "no model"; $("#modelDot").className = "dot " + (cfg.model ? "ok" : "bad");
     $("#variants").value = String(cfg.variants || 3);
+    $("#engine").value = cfg.mode || "auto";
+    $("#engine").title = `auto currently resolves to: ${cfg.resolved_mode || "html"}`;
   }
   function openSettings() {
     const sel = $("#providerSel"); sel.innerHTML = Object.keys(cfg.presets).map(k => `<option ${k === cfg.provider ? "selected" : ""}>${k}</option>`).join("");

@@ -1,7 +1,10 @@
 """Prompts for screen generation and iteration."""
 from __future__ import annotations
 
+import json
 import re
+
+from .components import NODE_DOCS, EXAMPLE_SPEC
 
 SYSTEM = """You are a senior product designer who designs by writing HTML. You produce finished, high-craft UI screens as a single self-contained HTML document.
 
@@ -82,3 +85,71 @@ def partial_html(text: str) -> str:
     if start < 0:
         start = low.find("<style")
     return text[start:] if start >= 0 else ""
+
+
+# --------------------------------------------------------------------------- spec mode (small models)
+SPEC_SYSTEM = """You are a product designer. You design screens by writing a compact JSON layout spec; a renderer turns it into a polished UI. Do not write HTML.
+
+Output rules (strict):
+- Output ONLY one JSON object. No prose, no markdown fences, no comments.
+- Top level: {"title", "tokens":{"primary":"#hex","theme":"light|dark","radius":int,"density":"normal|compact"}, "layout":"sidebar|topnav|plain|centered|mobile", "nav":{"brand","items":[..],"active","user"}, "sections":[node, ...]}
+- Use realistic, specific content: real-sounding names, numbers, dates, copy. Never "Lorem ipsum" or placeholder text.
+- Aim for 4-8 sections that together make a complete, believable screen. Use grid/split to put things side by side on wide screens.
+- Viewport is {width}px wide{mobile_hint}.
+{direction}
+{nodes}
+
+Example of a complete spec:
+{example}"""
+
+SPEC_ITERATE = """Current screen spec:
+{spec}
+
+Apply this change: {instruction}
+
+Return the complete updated spec as one JSON object only. Keep everything else the same unless the change requires otherwise."""
+
+
+def spec_system_prompt(width: int, direction: str | None) -> str:
+    mobile = ", a phone: prefer layout \"mobile\", single-column sections and a tabbar" if width <= 480 else ""
+    return (SPEC_SYSTEM.replace("{width}", str(width)).replace("{mobile_hint}", mobile)
+            .replace("{direction}", direction or "").replace("{nodes}", NODE_DOCS)
+            .replace("{example}", json.dumps(EXAMPLE_SPEC, separators=(",", ":"))))
+
+
+def design_system_prompt(ds: dict | None, for_spec: bool) -> str:
+    """Design-system constraints appended to the user prompt (tokens + component snippets)."""
+    if not ds:
+        return ""
+    parts = []
+    tk = ds.get("tokens") or {}
+    if tk:
+        parts.append("Design tokens (use these exactly): " + json.dumps({k: v for k, v in tk.items() if v}, separators=(",", ":")))
+    if ds.get("name"):
+        parts.insert(0, f"Design system: {ds['name']}.")
+    if ds.get("notes"):
+        parts.append("Guidelines: " + str(ds["notes"])[:1500])
+    if not for_spec:
+        comps = ds.get("components") or []
+        if comps:
+            parts.append("Component library — reuse this exact markup and class names for these components instead of inventing your own:")
+            for c in comps[:20]:
+                parts.append(f"<!-- {c.get('name')}: {c.get('description', '')} -->\n{str(c.get('html', ''))[:1500]}")
+        if ds.get("css"):
+            parts.append("Include this CSS verbatim in the <style> block before your own rules:\n" + str(ds["css"])[:6000])
+    return "\n\n".join(parts)
+
+
+def data_prompt(data: dict | None, for_spec: bool) -> str:
+    """Real data sources the screen must use (name → rows)."""
+    if not data:
+        return ""
+    parts = ["Real data to use literally in the UI (do not invent different values):"]
+    for name, rows in list(data.items())[:6]:
+        if isinstance(rows, dict):
+            rows = rows.get("rows") or rows.get("data") or rows.get("items") or rows
+        sample = rows[:12] if isinstance(rows, list) else rows
+        parts.append(f"Source \"{name}\" ({len(rows) if isinstance(rows, list) else 1} rows): " + json.dumps(sample, separators=(",", ":"), default=str)[:3000])
+    if for_spec:
+        parts.append('In table/list nodes you may set "data": "<source name>" to have all rows filled in automatically.')
+    return "\n".join(parts)
