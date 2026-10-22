@@ -21,6 +21,21 @@ STATIC = Path(__file__).parent / "static"
 CFG = config.load()
 CFG_LOCK = threading.Lock()
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+ALLOWED_HOSTS: set[str] = set()   # filled in main(); guards against DNS rebinding + cross-site requests
+AUDIT_LOCK = threading.Lock()
+
+
+def audit(event: dict):
+    """Append-only JSONL log of every model call (what was sent where). Off with audit=false."""
+    if not CFG.get("audit", True):
+        return
+    event = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **event}
+    try:
+        config.HOME.mkdir(parents=True, exist_ok=True)
+        with AUDIT_LOCK, open(config.AUDIT_PATH, "a") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 def _json(h, obj, status=200):
@@ -47,12 +62,16 @@ def _run_variant(cfg, idx, brief, context, width, direction, q: queue.Queue):
 def _run_iterate(cfg, idx, html, instruction, width, q: queue.Queue):
     sys_p = prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
     msgs = [{"role": "user", "content": prompts.ITERATE.format(html=html, instruction=instruction)}]
-    _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=0.4)
+    _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=0.4, kind="iterate")
 
 
-def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None):
+def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"):
     buf = ""
     last = 0.0
+    t0 = time.time()
+    rec = {"kind": kind, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
+           "prompt_chars": len(sys_p) + sum(len(m.get("content", "")) for m in msgs),
+           "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300]}
     try:
         thinking_sent = False
         for delta in llm.stream(cfg, sys_p, msgs, temperature=temperature):
@@ -67,12 +86,16 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None):
                 q.put({"type": "partial", "i": idx, "html": prompts.partial_html(buf)})
                 last = now
         _finish(q, idx, buf)
+        audit({**rec, "ok": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
     except llm.Truncated as e:
         _finish(q, idx, buf, warning=str(e))
+        audit({**rec, "ok": True, "truncated": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
     except llm.LLMError as e:
         q.put({"type": "error", "i": idx, "message": str(e)})
+        audit({**rec, "ok": False, "error": str(e)[:300], "secs": round(time.time() - t0, 1)})
     except Exception as e:  # noqa: BLE001
         q.put({"type": "error", "i": idx, "message": f"{type(e).__name__}: {e}"})
+        audit({**rec, "ok": False, "error": f"{type(e).__name__}: {e}"[:300], "secs": round(time.time() - t0, 1)})
 
 
 def _finish(q, idx, buf, warning=None):
@@ -127,8 +150,30 @@ class Handler(BaseHTTPRequestHandler):
             return
         sys.stderr.write("  " + line + "\n")
 
+    # ---- security
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
+        return host in ALLOWED_HOSTS
+
+    def _same_origin(self) -> bool:
+        """Reject cross-site state changes (a web page you visit must not be able to repoint your API key)."""
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if not origin:
+            return True  # curl / scripts without Origin; browsers always send it for cross-site POSTs
+        host = (urlparse(origin).hostname or "").strip("[]").lower()
+        return host in ALLOWED_HOSTS
+
+    def _guard(self, mutating: bool) -> bool:
+        if not self._host_ok():
+            _json(self, {"error": "forbidden host"}, 403); return False
+        if mutating and not self._same_origin():
+            _json(self, {"error": "cross-origin request blocked"}, 403); return False
+        return True
+
     # ---- GET
     def do_GET(self):
+        if not self._guard(False):
+            return
         u = urlparse(self.path)
         if u.path == "/" or u.path == "/index.html":
             return self._static("index.html")
@@ -179,6 +224,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- POST / PUT / DELETE
     def do_POST(self):
+        if not self._guard(True):
+            return
         u = urlparse(self.path)
         try:
             body = _read_json(self)
@@ -188,8 +235,11 @@ class Handler(BaseHTTPRequestHandler):
             with CFG_LOCK:
                 if body.get("provider") and body["provider"] != CFG.get("provider"):
                     config.apply_preset(CFG, body["provider"])
-                for k in ("base_url", "model", "variants", "temperature", "max_tokens", "allow_cdn", "api", "effort"):
+                for k in ("base_url", "model", "variants", "temperature", "max_tokens", "allow_cdn", "api", "effort", "audit", "mode"):
                     if k in body and body[k] not in (None, ""):
+                        CFG[k] = body[k]
+                for k in ("allow_cdn", "audit"):
+                    if k in body and isinstance(body[k], bool):
                         CFG[k] = body[k]
                 if body.get("api_key"):
                     CFG["api_key"] = body["api_key"]
@@ -235,6 +285,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_DELETE(self):
+        if not self._guard(True):
+            return
         u = urlparse(self.path)
         if u.path.startswith("/api/projects/"):
             try:
@@ -246,9 +298,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="ld", description="localdesign — prompt → UI mockups on a canvas, any LLM.")
+    ap = argparse.ArgumentParser(prog="lde", description="localdesign — prompt → UI mockups on a canvas, any LLM.")
     ap.add_argument("--port", type=int, default=int(os.environ.get("LD_PORT", 7878)))
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="127.0.0.1", help="Bind address. 0.0.0.0 exposes the app (and your API key's usage) to your network — only on trusted LANs.")
+    ap.add_argument("--allow-host", action="append", default=[], help="Extra hostname the app may be reached at (e.g. design.lan). Repeatable.")
+    ap.add_argument("--no-audit", action="store_true", help="Disable the audit log (~/.localdesign/audit.jsonl)")
     ap.add_argument("--no-open", action="store_true", help="Don't open the browser")
     ap.add_argument("--provider", help="Preset: " + ", ".join(config.PRESETS))
     ap.add_argument("--base-url")
@@ -266,10 +320,17 @@ def main(argv=None):
             CFG["model"] = a.model
         if a.api_key:
             CFG["api_key"] = a.api_key
-    url = f"http://{a.host}:{a.port}"
+        if a.no_audit:
+            CFG["audit"] = False
+    ALLOWED_HOSTS.update({"localhost", "127.0.0.1", "::1", a.host.lower(), *(h.lower() for h in a.allow_host)})
+    if a.host in ("0.0.0.0", "::"):
+        import socket
+        ALLOWED_HOSTS.add(socket.gethostname().lower())
+        print("  ⚠ bound to all interfaces: anyone on your network can use this app and spend your API quota. Add --allow-host <name> for the hostname they'll use.")
+    url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '::') else a.host}:{a.port}"
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     srv.daemon_threads = True
-    print(f"localdesign v{__version__} · {url}\n  provider {CFG['provider']} · model {CFG['model'] or '(none — set in Settings)'} · {CFG['base_url']}\n  projects in {config.PROJECTS_DIR}\n  Ctrl-C to stop")
+    print(f"localdesign v{__version__} · {url}\n  provider {CFG['provider']} · model {CFG['model'] or '(none — set in Settings)'} · {CFG['base_url']}\n  projects in {config.PROJECTS_DIR} · audit log {'on: ' + str(config.AUDIT_PATH) if CFG.get('audit', True) else 'off'}\n  Ctrl-C to stop")
     if not a.no_open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

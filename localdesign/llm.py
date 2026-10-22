@@ -98,7 +98,16 @@ def stream(cfg, system: str, messages: list[dict], temperature: float | None = N
     body = {"model": cfg["model"], "messages": [{"role": "system", "content": system}, *messages], "stream": True,
             "max_tokens": int(cfg.get("max_tokens") or 8192), "temperature": temp}
     finish = None
-    with _post(base + "/chat/completions", _headers(cfg), body) as resp:
+    try:
+        resp = _post(base + "/chat/completions", _headers(cfg), body)
+    except LLMError as e:
+        msg = str(e).lower()
+        if "400" in msg and ("max_tokens" in msg or "max_completion_tokens" in msg or "context length" in msg):
+            body.pop("max_tokens", None)   # server has its own cap; let it decide
+            resp = _post(base + "/chat/completions", _headers(cfg), body)
+        else:
+            raise
+    with resp:
         for ev in _sse(resp):
             if ev.get("error"):
                 raise LLMError(str(ev["error"].get("message", ev["error"])))

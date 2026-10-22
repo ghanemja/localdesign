@@ -8,6 +8,7 @@ from pathlib import Path
 HOME = Path(os.environ.get("LD_HOME", Path.home() / ".localdesign"))
 CONFIG_PATH = HOME / "config.json"
 PROJECTS_DIR = HOME / "projects"
+AUDIT_PATH = HOME / "audit.jsonl"
 
 PRESETS: dict[str, dict] = {
     "ollama":     {"api": "openai", "base_url": "http://localhost:11434/v1", "api_key": "ollama", "model": "qwen2.5-coder:7b"},
@@ -31,7 +32,9 @@ DEFAULTS = {
     "temperature": 0.8,
     "max_tokens": 16000,
     "allow_cdn": False,
-    "effort": "low",          # Anthropic output_config.effort: low | medium | high       # let generated screens load Tailwind/Google Fonts from the internet
+    "effort": "low",          # Anthropic output_config.effort: low | medium | high
+    "audit": True,            # append every model call to ~/.localdesign/audit.jsonl
+    "mode": "auto",           # generation engine: auto | html | spec (spec = JSON layout rendered locally; best for small models)
 }
 
 
@@ -45,15 +48,11 @@ def load() -> dict:
     for key, env in (("provider", "LD_PROVIDER"), ("base_url", "LD_BASE_URL"), ("model", "LD_MODEL"), ("api_key", "LD_API_KEY"), ("api", "LD_API")):
         if os.environ.get(env):
             cfg[key] = os.environ[env]
-    if cfg["provider"] in PRESETS and not os.environ.get("LD_BASE_URL") and not cfg.get("_custom_base_url"):
-        p = PRESETS[cfg["provider"]]
-        cfg.setdefault("api", p["api"])
-    # resolve API key from provider env var if none stored
     p = PRESETS.get(cfg["provider"], {})
-    if (not cfg.get("api_key") or cfg["api_key"] in ("", None)) and p.get("api_key_env"):
+    cfg.setdefault("api", p.get("api", "openai"))
+    # API key: stored value, else the provider's env var. (Stored keys live in plaintext in config.json — prefer env vars.)
+    if not cfg.get("api_key") and p.get("api_key_env"):
         cfg["api_key"] = os.environ.get(p["api_key_env"], "")
-    if not cfg.get("api_key") and p.get("api_key_env") and os.environ.get(p["api_key_env"]):
-        cfg["api_key"] = os.environ[p["api_key_env"]]
     return cfg
 
 
