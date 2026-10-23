@@ -9,6 +9,7 @@ HOME = Path(os.environ.get("LD_HOME", Path.home() / ".localdesign"))
 CONFIG_PATH = HOME / "config.json"
 PROJECTS_DIR = HOME / "projects"
 AUDIT_PATH = HOME / "audit.jsonl"
+ASSETS_DIR = HOME / "assets"
 
 PRESETS: dict[str, dict] = {
     "ollama":     {"api": "openai", "base_url": "http://localhost:11434/v1", "api_key": "ollama", "model": "qwen2.5-coder:7b"},

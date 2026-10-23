@@ -102,9 +102,12 @@
     if (d.moving && d.target) { d.after ? d.target.after(d.el) : d.target.before(d.el); changed("move"); }
   }, true);
   function dropAt(html, x, y) {
-    const over = pick(x, y) || document.body; const t = document.createElement("template"); t.innerHTML = html.trim(); const node = t.content.firstElementChild; if (!node) return;
-    if (over === document.body) document.body.appendChild(node); else { const r = over.getBoundingClientRect(); (y > r.top + r.height / 2) ? over.after(node) : over.before(node); }
-    select(node); changed("drop");
+    const over = pick(x, y) || document.body; const t = document.createElement("template"); t.innerHTML = html.trim();
+    const nodes = [...t.content.children]; if (!nodes.length) return;
+    for (const n of nodes) { if (n.tagName === "STYLE" && n.hasAttribute("data-ld-lib")) { const key = n.getAttribute("data-ld-lib"); if (document.querySelector(`style[data-ld-lib="${key}"]`)) n.remove(); else document.head.appendChild(n); } }
+    const els = nodes.filter(n => n.isConnected === false && n.tagName !== "STYLE"); const first = els[0]; if (!first) { changed("drop"); return; }
+    if (over === document.body) els.forEach(n => document.body.appendChild(n)); else { const r = over.getBoundingClientRect(); const after = y > r.top + r.height / 2; let ref = over; for (const n of els) { after ? ref.after(n) : ref.before(n); if (after) ref = n; } }
+    select(first); changed("drop");
   }
 
   // ---------- parent → shim

@@ -4,9 +4,10 @@
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const uid = () => Math.random().toString(36).slice(2, 10);
   const HEIGHTS = { 1280: 800, 768: 1024, 390: 844 };
+  const frameH = (s) => s.kind === "artifact" ? (s.width >= 1280 ? 880 : HEIGHTS[s.width]) : HEIGHTS[s.width];
 
   // ------------------------------------------------------------ state
-  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {} });
+  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {}, assets: [] });
   let project = blankProject();
   let selected = null;           // screen id
   let cfg = {};
@@ -41,7 +42,7 @@
   function fitAll() {
     if (!project.screens.length) return;
     const xs = project.screens.map(s => s.x), ys = project.screens.map(s => s.y);
-    const xe = project.screens.map(s => s.x + s.width), ye = project.screens.map(s => s.y + HEIGHTS[s.width] + 36);
+    const xe = project.screens.map(s => s.x + s.width), ye = project.screens.map(s => s.y + frameH(s) + 36);
     const bx = Math.min(...xs), by = Math.min(...ys), bw = Math.max(...xe) - bx, bh = Math.max(...ye) - by;
     const vw = viewport.clientWidth, vh = viewport.clientHeight - 140;
     const z = Math.min(3, Math.max(0.08, Math.min((vw - 80) / bw, (vh - 60) / bh)));
@@ -86,12 +87,12 @@
       wireFrame(el, s);
     }
     el.style.left = s.x + "px"; el.style.top = s.y + "px"; el.style.width = s.width + "px";
-    $(".body", el).style.height = HEIGHTS[s.width] + "px";
+    $(".body", el).style.height = frameH(s) + "px";
+    $(".eng", el).textContent = s.kind === "artifact" ? "artifact" : (s.spec ? "spec" : "");
     $(".title", el).textContent = s.title;
     const v = $(".ver", el); v.textContent = "v" + (s.versions.length); v.title = s.versions.length > 1 ? "Click to switch version" : "";
     v.style.display = s.versions.length > 1 ? "" : "none";
     el.classList.toggle("selected", s.id === selected);
-    $(".eng", el).textContent = s.spec ? "spec" : "";
     if (!s.html && !el.classList.contains("loading")) { el.classList.add("noresult"); const er = $(".err", el); if (!er.textContent) { er.textContent = "No result saved (page was closed mid-generation?). Click ↻ to regenerate."; er.classList.remove("hidden"); } }
     else if (s.html && !el.classList.contains("failed")) { el.classList.remove("noresult"); const er = $(".err", el); er.textContent = ""; er.classList.add("hidden"); }
     if ($("iframe", el).dataset.html !== s.html) setFrameHTML(el, s.html);
@@ -124,8 +125,8 @@
     $(".title", el).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
     $(".ver", el).addEventListener("click", e => { e.stopPropagation(); cycleVersion(s); });
     $(".dup", el).addEventListener("click", e => { e.stopPropagation(); duplicate(s); });
-    $(".dl", el).addEventListener("click", e => { e.stopPropagation(); download(`${slug(s.title)}.html`, s.html, "text/html"); });
-    $(".open", el).addEventListener("click", e => { e.stopPropagation(); const b = new Blob([s.html], { type: "text/html" }); window.open(URL.createObjectURL(b), "_blank"); });
+    $(".dl", el).addEventListener("click", async e => { e.stopPropagation(); download(`${slug(s.title)}.html`, await inlined(s.html), "text/html"); });
+    $(".open", el).addEventListener("click", async e => { e.stopPropagation(); const b = new Blob([await inlined(s.html)], { type: "text/html" }); window.open(URL.createObjectURL(b), "_blank"); });
     $(".del", el).addEventListener("click", e => { e.stopPropagation(); removeScreen(s.id); });
     $(".regen", el).addEventListener("click", e => { e.stopPropagation(); regenerate(s); });
   }
@@ -149,7 +150,7 @@
     selected = id;
     frames.forEach((el, fid) => el.classList.toggle("selected", fid === id));
     const s = id && screenById(id);
-    if (s) postFrame(id, { type: "mode", edit: true });
+    if (s) { postFrame(id, { type: "mode", edit: true }); if (!localStorage.getItem("ld.hint.editor")) { toast("Click any element inside the screen to edit it · double-click text · drag to reorder or onto another screen · ⌘Z undo", 7000); localStorage.setItem("ld.hint.editor", "1"); } }
     updateChip();
   }
   function updateChip() {
@@ -172,8 +173,9 @@
   }
   function nextRowY() {
     if (!project.screens.length) return 0;
-    return Math.max(...project.screens.map(s => s.y + HEIGHTS[s.width] + 36)) + 120;
+    return Math.max(...project.screens.map(s => s.y + frameH(s) + 36)) + 120;
   }
+  async function inlined(html) { if (!/\/assets\//.test(html)) return html; try { const r = await fetch("/api/inline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ html }) }); return (await r.json()).html || html; } catch { return html; } }
   const slug = t => (t || "screen").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
 
   // ------------------------------------------------------------ SSE helper
@@ -192,7 +194,9 @@
   }
 
   // ------------------------------------------------------------ generate / iterate
-  const genExtras = () => ({ mode: $("#engine").value, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined });
+  let genKind = "screen";
+  $$("#kindSeg button").forEach(b => b.addEventListener("click", () => { genKind = b.dataset.kind; $$("#kindSeg button").forEach(x => x.classList.toggle("on", x === b)); if (genKind === "artifact") { $("#variants").value = "1"; } promptEl.placeholder = genKind === "artifact" ? "Describe an app, tool, chart, game or document to build…" : "Describe a screen to design…"; }));
+  const genExtras = () => ({ mode: $("#engine").value, kind: genKind, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined, assets: (project.assets || []).length ? project.assets : undefined });
   let progTimer = null, progStart = 0, progBytes = {};
   function setBusy(b, label) {
     goBtn.disabled = b; stopBtn.classList.toggle("hidden", !b);
@@ -219,7 +223,7 @@
     const n = +$("#variants").value, width = project.device, y = nextRowY();
     const batch = [];
     for (let i = 0; i < n; i++) {
-      const s = { id: uid(), title: shortTitle(brief) + (n > 1 ? ` ${String.fromCharCode(65 + i)}` : ""), brief, x: i * (width + 80), y, width, html: "", versions: [] };
+      const s = { id: uid(), title: shortTitle(brief) + (n > 1 ? ` ${String.fromCharCode(65 + i)}` : ""), brief, x: i * (width + 80), y, width, html: "", versions: [], kind: genKind };
       project.screens.push(s); batch.push(s);
     }
     renderAll(); batch.forEach(s => frames.get(s.id).classList.add("loading"));
@@ -236,7 +240,7 @@
     const el = frames.get(s.id); el.classList.add("loading");
     const prev = s.html; aborter = new AbortController(); setBusy(true, "Applying change");
     try {
-      await streamPost("/api/iterate", { html: prev, instruction, width: s.width, spec: s.spec || undefined, ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
+      await streamPost("/api/iterate", { html: prev, instruction, width: s.width, spec: s.spec || undefined, ...genExtras(), kind: s.kind || "screen" }, ev => handleEvent(ev, [s]), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish([s]); }
   }
@@ -248,7 +252,7 @@
     const brief = s.brief || s.title;
     aborter = new AbortController(); setBusy(true, "Regenerating");
     try {
-      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context: projectContext([s]), ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
+      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context: projectContext([s]), ...genExtras(), kind: s.kind || "screen" }, ev => handleEvent(ev, [s]), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish([s]); }
   }
@@ -308,7 +312,20 @@
   $("#zoomOut").addEventListener("click", () => zoomAt(0.8, viewport.clientWidth / 2, viewport.clientHeight / 2));
   $("#zoomLabel").addEventListener("click", () => { project.camera.z = 1; applyCamera(); });
   $("#fitBtn").addEventListener("click", fitAll);
-  $$("#deviceSeg button").forEach(b => b.addEventListener("click", () => { project.device = +b.dataset.w; renderAll(); scheduleSave(); }));
+  $$("#deviceSeg button").forEach(b => b.addEventListener("click", async () => {
+    const w = +b.dataset.w; project.device = w;
+    const s = selected && screenById(selected);
+    if (s && s.width !== w) {
+      s.width = w; renderFrame(s);
+      if (s.spec) {
+        try { const r = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec: s.spec, width: w, design_system: project.designSystem || undefined, data: project.data }) });
+          const d = await r.json(); if (d.html) { s.html = d.html; s.versions[s.versions.length - 1] = d.html; setFrameHTML(frames.get(s.id), d.html); } } catch {}
+        toast(`${s.title} re-rendered at ${w}px`, 2000);
+      } else toast(`${s.title} resized to ${w}px — it reflows; press ↻ to regenerate it for this size`, 3500);
+      drawArrows();
+    } else if (!s) toast(`New screens will be ${w === 1280 ? "desktop" : w === 768 ? "tablet" : "phone"} width. Select a screen to resize it.`, 2500);
+    renderAll(); scheduleSave();
+  }));
   $("#projectName").addEventListener("change", e => { project.name = e.target.value.trim() || "Untitled"; scheduleSave(); });
   const exportMenu = $("#exportMenu");
   $("#exportBtn").addEventListener("click", e => { e.stopPropagation(); exportMenu.classList.toggle("hidden"); });
@@ -322,8 +339,8 @@
     try {
       if (kind === "json") download(`${slug(project.name)}.localdesign.json`, JSON.stringify(project, null, 2), "application/json");
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
-      else if (kind === "html") download(`${slug(s.title)}.html`, s.html, "text/html");
-      else if (kind === "html-all") { for (const sc of project.screens.filter(x => x.html)) { download(`${slug(sc.title)}.html`, sc.html, "text/html"); await new Promise(r => setTimeout(r, 300)); } }
+      else if (kind === "html") download(`${slug(s.title)}.html`, await inlined(s.html), "text/html");
+      else if (kind === "html-all") { for (const sc of project.screens.filter(x => x.html)) { download(`${slug(sc.title)}.html`, await inlined(sc.html), "text/html"); await new Promise(r => setTimeout(r, 300)); } }
       else if (kind === "react" || kind === "react-all") {
         const list = kind === "react" ? [s] : project.screens.filter(x => x.html);
         for (const sc of list) { const d = await post("/api/export/react", { html: sc.html, title: sc.title }); download(`${d.name}.jsx`, d.jsx, "text/javascript"); await new Promise(r => setTimeout(r, 250)); download(`${d.name}.css`, d.css, "text/css"); await new Promise(r => setTimeout(r, 300)); }
@@ -372,7 +389,7 @@
   }
   async function loadProject(id) {
     const r = await fetch("/api/projects/" + id); if (!r.ok) return false;
-    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.data ||= {}; project.designSystem ||= null; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
+    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.data ||= {}; project.designSystem ||= null; project.assets ||= []; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
     frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); localStorage.setItem("ld.last", id); return true;
   }
   function newProject() {
@@ -491,7 +508,7 @@
     xdrag = { from, html, desc }; document.body.classList.add("xdrag");
     const g = $("#dragGhost"); g.textContent = "⇢ " + desc; g.classList.remove("hidden");
   }
-  function cancelXDrag(notify = true) { if (!xdrag) return; if (notify) postFrame(xdrag.from, { type: "dragcancel" }); xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); $$(".frame.droptarget").forEach(f => f.classList.remove("droptarget")); }
+  function cancelXDrag(notify = true) { if (!xdrag) return; if (notify && xdrag.from !== "library") postFrame(xdrag.from, { type: "dragcancel" }); xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); $$(".frame.droptarget").forEach(f => f.classList.remove("droptarget")); }
   window.addEventListener("pointermove", e => {
     if (pendingDrag && !xdrag) { postFrame(pendingDrag, { type: "dragout-request" }); pendingDrag = null; }
     if (!xdrag) return;
@@ -505,7 +522,7 @@
     if (fr && fr.dataset.id !== xdrag.from) {
       const r = $("iframe", fr).getBoundingClientRect(), z = project.camera.z;
       postFrame(fr.dataset.id, { type: "drop", html: xdrag.html, x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z });
-      postFrame(xdrag.from, { type: "dragcancel" }); select(fr.dataset.id);
+      if (xdrag.from !== "library") postFrame(xdrag.from, { type: "dragcancel" }); select(fr.dataset.id);
       xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); fr.classList.remove("droptarget");
     } else cancelXDrag(true);
   });
@@ -603,6 +620,73 @@
     finally { finish(batch); drawArrows(); }
   });
 
+  // ------------------------------------------------------------ library panel (components + assets)
+  const lib = $("#library"); let libLoaded = false, libStyleTag = "";
+  function showLib(on) { lib.classList.toggle("hidden", !on); viewport.classList.toggle("withlib", on); if (on && !libLoaded) loadLibrary(); if (on) renderAssets(); }
+  $("#libBtn").addEventListener("click", () => showLib(lib.classList.contains("hidden")));
+  $("#libClose").addEventListener("click", () => showLib(false));
+  $$("#library [data-tab]").forEach(b => b.addEventListener("click", () => { $$("#library [data-tab]").forEach(x => x.classList.toggle("on", x === b)); $("#libComponents").classList.toggle("hidden", b.dataset.tab !== "components"); $("#libAssets").classList.toggle("hidden", b.dataset.tab !== "assets"); }));
+  async function loadLibrary() {
+    const r = await fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ design_system: project.designSystem || undefined }) });
+    const d = await r.json(); libStyleTag = d.style_tag; libLoaded = true;
+    const grid = $("#libComponents"); grid.innerHTML = "";
+    for (const it of d.items) {
+      const card = document.createElement("div"); card.className = "libitem"; card.title = "Drag onto a screen";
+      card.innerHTML = `<div class="thumb"><iframe sandbox="" loading="lazy"></iframe></div><div class="lbl">${esc(it.name)}</div>`;
+      card.querySelector("iframe").srcdoc = `<!doctype html><html><head><style>${d.css}body{padding:12px;background:#fff}</style></head><body>${it.html}</body></html>`;
+      wireLibDrag(card, () => libStyleTag + it.html, it.name);
+      grid.appendChild(card);
+    }
+    renderSnippets();
+  }
+  function renderSnippets() {
+    const grid = $("#snippetGrid"); grid.innerHTML = "";
+    const comps = (project.designSystem && project.designSystem.components) || [];
+    if (!comps.length) { grid.innerHTML = "<div class='muted small'>None yet.</div>"; return; }
+    for (const c of comps) {
+      const card = document.createElement("div"); card.className = "libitem";
+      card.innerHTML = `<div class="thumb"><iframe sandbox="" loading="lazy"></iframe></div><div class="lbl">${esc(c.name || "snippet")}</div>`;
+      card.querySelector("iframe").srcdoc = `<!doctype html><html><head><style>${(project.designSystem.css || "")}body{padding:12px;font-family:system-ui}</style></head><body>${c.html}</body></html>`;
+      wireLibDrag(card, () => (project.designSystem.css ? `<style data-ld-lib="ds">${project.designSystem.css}</style>` : "") + c.html, c.name);
+      grid.appendChild(card);
+    }
+  }
+  function renderAssets() {
+    const grid = $("#assetGrid"); grid.innerHTML = "";
+    const assets = project.assets || [];
+    if (!assets.length) grid.innerHTML = "<div class='muted small'>No assets yet. Upload your logo, icons, product shots.</div>";
+    for (const a of assets) {
+      const card = document.createElement("div"); card.className = "libitem";
+      card.innerHTML = `<div class="thumb"><img src="${esc(a.url)}" alt=""></div><div class="lbl">${esc(a.name)}<button class="ic del" title="Remove">×</button></div>`;
+      card.querySelector(".del").addEventListener("pointerdown", e => e.stopPropagation());
+      card.querySelector(".del").addEventListener("click", async e => { e.stopPropagation(); await fetch(a.url, { method: "DELETE" }); project.assets = project.assets.filter(x => x !== a); renderAssets(); scheduleSave(); });
+      const img = card.querySelector("img"); img.addEventListener("load", () => { a.w = img.naturalWidth; a.h = img.naturalHeight; });
+      wireLibDrag(card, () => `<img src="${a.url}" alt="${esc(a.name)}" style="max-width:100%;height:auto;display:block">`, a.name);
+      grid.appendChild(card);
+    }
+  }
+  function wireLibDrag(card, htmlFn, desc) {
+    card.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return; e.preventDefault();
+      const st = { x: e.clientX, y: e.clientY };
+      const mv = ev => { if (Math.hypot(ev.clientX - st.x, ev.clientY - st.y) > 6) { window.removeEventListener("pointermove", mv); startXDrag("library", htmlFn(), desc); } };
+      const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
+      window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+    });
+  }
+  $("#assetUpload").addEventListener("click", () => $("#assetFile").click());
+  $("#assetFile").addEventListener("change", async e => {
+    if (!project.id) { await save(); }
+    if (!project.id) { toast("Generate or name something first so the project exists."); return; }
+    for (const f of e.target.files) {
+      const b64 = await new Promise(res => { const rd = new FileReader(); rd.onload = () => res(rd.result.split(",")[1]); rd.readAsDataURL(f); });
+      const r = await fetch("/api/assets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: project.id, name: f.name, type: f.type || "image/png", data: b64 }) });
+      const d = await r.json(); if (d.error) { toast(d.error, 4000); continue; }
+      (project.assets ||= []).push({ name: d.name, url: d.url, type: d.type });
+    }
+    e.target.value = ""; renderAssets(); scheduleSave(); toast(`${project.assets.length} asset${project.assets.length === 1 ? "" : "s"} — generated screens will use them`);
+  });
+
   // ------------------------------------------------------------ design system
   const dsDlg = $("#dsDlg");
   let dsDraft = null;   // working copy while the dialog is open
@@ -652,7 +736,7 @@
   $("#dsSave").addEventListener("click", async () => {
     dsDraft.name = $("#dsName").value.trim(); dsDraft.tokens = dsReadTokens(); dsDraft.notes = $("#dsNotes").value.trim(); dsDraft.css = $("#dsCss").value.trim();
     dsDraft.components = (dsDraft.components || []).filter(c => c.html && c.html.trim());
-    project.designSystem = dsDraft; dsDlg.close(); dsIndicator(); scheduleSave();
+    project.designSystem = dsDraft; dsDlg.close(); dsIndicator(); scheduleSave(); libLoaded = false; if (!lib.classList.contains("hidden")) loadLibrary();
     await rerenderSpecScreens(); toast("Design system saved" + (project.designSystem.name ? ": " + project.designSystem.name : ""));
   });
   $("#dsClear").addEventListener("click", async () => { project.designSystem = null; dsDlg.close(); dsIndicator(); scheduleSave(); await rerenderSpecScreens(); });

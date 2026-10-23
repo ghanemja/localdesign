@@ -152,3 +152,22 @@ body.xdrag .frame.droptarget { outline-color: var(--accent); }
 .menu button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
 .menu button:hover { background: var(--bg); }
 .menu .sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+body { flex-direction: column; }
+#library { position: absolute; left: 0; top: 49px; bottom: 0; width: 320px; background: var(--panel); border-right: 1px solid var(--line); z-index: 7; display: flex; flex-direction: column; padding: 10px 12px; gap: 8px; overflow: auto; box-shadow: var(--shadow); }
+#library .libhead { display: flex; align-items: center; gap: 8px; }
+.seg.small button { padding: 4px 9px; font-size: 12px; }
+.libhint { margin: 0; }
+.libgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.libitem { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); cursor: grab; user-select: none; }
+.libitem:active { cursor: grabbing; }
+.libitem .thumb { height: 86px; overflow: hidden; background: #fff; position: relative; pointer-events: none; }
+.libitem .thumb iframe { width: 640px; height: 344px; border: 0; transform: scale(.25); transform-origin: 0 0; pointer-events: none; }
+.libitem .thumb img { max-width: 100%; max-height: 86px; display: block; margin: 0 auto; object-fit: contain; padding: 6px; box-sizing: border-box; }
+.libitem .lbl { font-size: 11px; padding: 5px 7px; display: flex; align-items: center; gap: 4px; text-transform: capitalize; }
+.libitem .lbl .ic { margin-left: auto; padding: 0 4px; font-size: 12px; }
+#library h3 { margin: 10px 0 4px; }
+#libAssets .row { margin: 0 0 8px; }
+#viewport.withlib { margin-left: 320px; }
+#libBtn { white-space: nowrap; }
+body:has(#library:not(.hidden)) #promptBar { left: calc(50% + 160px); width: min(720px, calc(100% - 352px)); }

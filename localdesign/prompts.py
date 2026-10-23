@@ -11,7 +11,7 @@ SYSTEM = """You are a senior product designer who designs by writing HTML. You p
 Output rules (strict):
 - Output ONLY the HTML document, starting with <!DOCTYPE html> and ending with </html>. No explanation, no markdown fences.
 - Everything inline: a single <style> block in <head>, no external stylesheets, scripts, fonts or images{cdn_rule}.
-- For imagery use CSS gradients, solid color blocks, inline SVG icons, or emoji. Never reference image URLs.
+- For imagery use CSS gradients, solid color blocks, inline SVG icons, or emoji. Never reference image URLs, except the brand assets listed in the request (use those exact URLs with <img>).
 - Use realistic, specific content (real-sounding names, numbers, copy). No "Lorem ipsum", no "Heading 1".
 - Design for a viewport {width}px wide. Set body margin 0 and make the layout fill that width. Do not add outer device frames.
 - Use a coherent design system: a limited palette defined as CSS variables on :root, one or two font stacks (system-ui is fine), consistent spacing scale and radii, clear type hierarchy, generous whitespace.
@@ -61,8 +61,8 @@ def system_prompt(width: int, direction: str | None, allow_cdn: bool) -> str:
     return SYSTEM.format(width=width, direction=direction or "", cdn_rule=CDN_RULE_ALLOWED if allow_cdn else "")
 
 
-def generate_user_prompt(brief: str, context: str | None) -> str:
-    out = f"Design this screen:\n\n{brief}"
+def generate_user_prompt(brief: str, context: str | None, verb: str | None = None) -> str:
+    out = f"{verb or 'Design this screen:'}\n\n{brief}"
     if context:
         out += f"\n\nProject context (keep consistent with it):\n{context}"
     return out
@@ -225,3 +225,29 @@ Component name: {name}
 ```html
 {html}
 ```"""
+
+
+ARTIFACT_SYSTEM = """You are an expert front-end engineer and designer. You build complete, working, self-contained interactive artifacts as a single HTML file: small apps, tools, calculators, games, data visualizations, interactive documents, simulations, slides.
+
+Output rules (strict):
+- Output ONLY the HTML document, starting with <!DOCTYPE html> and ending with </html>. No explanation, no markdown fences.
+- Everything inline: one <style> block and one <script> block. No external scripts, stylesheets, fonts, or images{cdn_rule}. Brand assets listed in the request may be used by their exact URL.
+- It must actually work: wire up all interactions in plain JavaScript (no frameworks), handle edge cases, no console errors. Use <canvas> or inline SVG for graphics. State lives in JS variables; persist to localStorage only if useful.
+- Make it feel finished: clear layout for a {width}px-wide viewport, sensible defaults and sample data so it is useful immediately, keyboard support where natural, responsive enough to not break when narrower.
+- Keep it reasonably compact; prefer clarity over cleverness. No comments longer than a line.
+"""
+
+
+def artifact_system_prompt(width: int, allow_cdn: bool) -> str:
+    return ARTIFACT_SYSTEM.replace("{width}", str(width)).replace("{cdn_rule}", CDN_RULE_ALLOWED if allow_cdn else "")
+
+
+def assets_prompt(assets: list | None) -> str:
+    """Company/brand assets the model may reference by URL."""
+    if not assets:
+        return ""
+    lines = ["Brand assets available (use these exact URLs in <img src>; do not invent other image URLs):"]
+    for a in assets[:30]:
+        dims = f" {a['w']}×{a['h']}" if a.get("w") and a.get("h") else ""
+        lines.append(f"- {a.get('name')}: {a.get('url')}{dims}" + (f" — {a['note']}" if a.get("note") else ""))
+    return "\n".join(lines)

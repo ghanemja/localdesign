@@ -11,6 +11,7 @@
 <header id="topbar">
   <div class="left">
     <div class="logo">localdesign</div>
+    <button class="ghost" id="libBtn" title="Component & asset library (drag onto screens)">⊟ Library</button>
     <button class="ghost" id="projectsBtn" title="Projects">▾</button>
     <input id="projectName" class="name" value="Untitled" spellcheck="false">
     <span id="saveState" class="muted"></span>
@@ -51,6 +52,25 @@
   </div>
 </header>
 
+<aside id="library" class="hidden">
+  <div class="libhead">
+    <div class="seg small"><button data-tab="components" class="on">Components</button><button data-tab="assets">My assets</button></div>
+    <span class="grow"></span>
+    <button class="ic" id="libClose" title="Close">×</button>
+  </div>
+  <p class="muted small libhint">Drag anything onto a screen. Components take the current design system's tokens.</p>
+  <div id="libComponents" class="libgrid"></div>
+  <div id="libAssets" class="hidden">
+    <div class="row">
+      <button type="button" class="ghost" id="assetUpload">⬆ Upload images / logos / icons</button>
+      <input type="file" id="assetFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon" multiple hidden>
+    </div>
+    <div id="assetGrid" class="libgrid"></div>
+    <h3 class="small">Brand snippets <span class="muted">— exact markup from your design system</span></h3>
+    <div id="snippetGrid" class="libgrid"></div>
+    <p class="muted small">Add snippets under ◫ Design system → Components. Generated screens are told about your assets and use them by URL; exports inline them.</p>
+  </div>
+</aside>
 <main id="viewport">
   <div id="canvas"><svg id="arrows"></svg></div>
   <div id="empty" class="empty">
@@ -70,6 +90,9 @@
     <label class="muted">variants
       <select id="variants"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>6</option></select>
     </label>
+    <div class="seg small" id="kindSeg" title="Screen: a UI mockup (variants, design directions). Artifact: a working interactive app, tool, chart, game or document as one HTML file.">
+      <button data-kind="screen" class="on">Screen</button><button data-kind="artifact">Artifact</button>
+    </div>
     <label class="muted" title="html: the model writes the whole page (best with strong models). spec: the model writes a compact JSON layout and localdesign renders it (reliable with small local models).">engine
       <select id="engine"><option value="auto" selected>auto</option><option value="html">html</option><option value="spec">spec</option></select>
     </label>

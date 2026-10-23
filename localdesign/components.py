@@ -9,7 +9,7 @@ Spec shape (all keys optional except sections):
   "title": "Fleet overview",
   "tokens": {"primary": "#1f6feb", "theme": "light|dark", "radius": 10, "font": "system-ui", "density": "normal|compact"},
   "layout": "sidebar|topnav|plain|centered|mobile",
-  "nav": {"brand": "Helios", "items": ["Overview", "Sites"], "active": "Overview", "user": "Mara L."},
+  "nav": {"brand": "Helios", "logo": "/assets/p/logo.svg", "items": ["Overview", "Sites"], "active": "Overview", "user": "Mara L."},
   "sections": [ {"type": "heading", ...}, {"type": "stats", ...}, ... ]
 }
 See NODE_DOCS for every node type and its props (that text is also what the model is shown).
@@ -38,9 +38,9 @@ tabs {items:[..], active}
 chips {items:[..], active}
 steps {items:[..], active:int}
 pricing {tiers:[{name, price, period, tagline, features:[..], cta, highlight:bool}]}
-hero {title, sub, cta, secondary, image:bool, align:"left|center"}
+hero {title, sub, cta, secondary, image:bool, image_src, align:"left|center"}
 features {items:[{icon, title, text}], cols:2|3|4}
-image {label, ratio:"16:9|4:3|1:1|3:4", height:int}
+image {label, src, ratio:"16:9|4:3|1:1|3:4", height:int}                   # src: an asset URL from the list you were given
 timeline {items:[{time, title, text}]}
 chat {messages:[{from:"me|them|bot", text}], placeholder}
 kv {title, items:[{k, v}]}
@@ -555,7 +555,7 @@ def r_hero(n, ctx):
     if n.get("secondary"):
         acts.append({"label": n["secondary"]})
     center = str(n.get("align", "left")) == "center" or not n.get("image", True)
-    img = '' if center else f'<div class="ld-img" style="height:320px">{e(n.get("image_label", "Product visual"))}</div>'
+    img = '' if center else (f'<img src="{e(n["image_src"])}" alt="" style="width:100%;height:320px;object-fit:cover;border-radius:var(--r)">' if n.get("image_src") else f'<div class="ld-img" style="height:320px">{e(n.get("image_label", "Product visual"))}</div>')
     return f'<section class="ld-hero {"center" if center else ""}"><div><h1>{e(n.get("title"))}</h1><p>{e(n.get("sub"))}</p><div class="ld-actions">{_btns(acts)}</div></div>{img}</section>'
 
 
@@ -569,6 +569,8 @@ def r_image(n, ctx):
     h = n.get("height")
     ratio = str(n.get("ratio") or "16:9").replace(":", "/")
     style = f"height:{int(h)}px" if h else f"aspect-ratio:{ratio}"
+    if n.get("src"):
+        return f'<img src="{e(n["src"])}" alt="{e(n.get("label", ""))}" style="display:block;width:100%;{style};object-fit:cover;border-radius:var(--r)">'
     return f'<div class="ld-img" style="{style}">{e(n.get("label", "Image"))}</div>'
 
 
@@ -669,8 +671,8 @@ def render(spec: dict, width: int = 1280, ds: dict | None = None, data: dict | N
     layout = str(spec.get("layout") or ("mobile" if width <= 480 else "sidebar")).lower()
     if layout not in ("sidebar", "topnav", "plain", "centered", "mobile"):
         layout = "plain"
-    if width <= 480 and layout == "sidebar":
-        layout = "mobile"
+    if width <= 480:
+        layout = "mobile"           # any desktop layout collapses to the phone layout at phone width
     nav = spec.get("nav") or {}
     ctx = {"data": data or {}, "width": width}
     sections = _children(spec, ctx, "sections")
@@ -679,7 +681,8 @@ def render(spec: dict, width: int = 1280, ds: dict | None = None, data: dict | N
     items = nav.get("items") or []
     active = nav.get("active")
     links = "".join(f'<a class="{"on" if (it == active or (active is None and i == 0)) else ""}" data-link="{e(it)}">{e(it)}</a>' for i, it in enumerate(items))
-    brand = f'<div class="ld-brand"><span class="mark"></span>{e(nav.get("brand") or spec.get("title") or "App")}</div>'
+    mark = f'<img src="{e(nav["logo"])}" alt="" style="height:28px;width:auto;max-width:140px">' if nav.get("logo") else '<span class="mark"></span>'
+    brand = f'<div class="ld-brand">{mark}{e(nav.get("brand") or spec.get("title") or "App")}</div>'
     if layout == "sidebar":
         shell = f'<aside class="ld-side">{brand}{links}<div class="spacer"></div>{user_html}</aside><main class="ld-main">{sections}</main>'
     elif layout == "topnav":
@@ -765,3 +768,49 @@ def repair_json(text: str) -> str:
     s = re.sub(r'[:,]\s*[A-Za-z0-9.+-]*$', lambda mm: mm.group(0)[0] + "null" if mm.group(0)[0] == ":" else "", s)
     s += "".join(reversed(stack))
     return s
+
+
+# --------------------------------------------------------------------------- component library (drag-and-drop palette)
+SAMPLES: dict[str, dict] = {
+    "heading": {"type": "heading", "text": "Section title", "sub": "Supporting line of context", "actions": [{"label": "Secondary"}, {"label": "Primary", "primary": True}]},
+    "stats": {"type": "stats", "items": [{"label": "Revenue", "value": "$18.4k", "delta": "+12%", "trend": "up"}, {"label": "Active", "value": "1,284"}, {"label": "Churn", "value": "2.1%", "delta": "-0.3", "trend": "down"}]},
+    "card": {"type": "card", "title": "Card title", "sub": "Subtitle", "body": "Body copy goes here. Short, specific, useful.", "actions": [{"label": "Action", "primary": True}]},
+    "table": {"type": "table", "title": "Table", "columns": ["Name", "Owner", "Status"], "rows": [["Alpha", "Mara", "Online"], ["Beta", "Theo", "Degraded"], ["Gamma", "Nadia", "Offline"]], "badge_col": 2},
+    "list": {"type": "list", "title": "List", "items": [{"title": "First item", "sub": "Detail", "badge": "new", "icon": "★"}, {"title": "Second item", "sub": "Detail", "meta": "2h"}]},
+    "chart-line": {"type": "chart", "kind": "area", "title": "Trend", "labels": ["Mon", "Tue", "Wed", "Thu", "Fri"], "series": [{"name": "This week", "values": [12, 19, 14, 24, 21]}, {"name": "Last week", "values": [10, 14, 12, 18, 17]}]},
+    "chart-bar": {"type": "chart", "kind": "bar", "title": "By category", "labels": ["A", "B", "C", "D"], "series": [{"name": "Units", "values": [40, 65, 30, 52]}]},
+    "chart-donut": {"type": "chart", "kind": "donut", "title": "Share", "series": [{"name": "Direct", "values": [48]}, {"name": "Organic", "values": [31]}, {"name": "Paid", "values": [21]}]},
+    "form": {"type": "form", "title": "Form", "fields": [{"label": "Email", "type": "email", "placeholder": "you@company.com"}, {"label": "Plan", "type": "select", "options": ["Starter", "Team"]}, {"label": "Notify me", "type": "toggle", "on": True}], "submit": "Continue"},
+    "buttons": {"type": "buttons", "items": [{"label": "Cancel"}, {"label": "Confirm", "primary": True}]},
+    "tabs": {"type": "tabs", "items": ["Overview", "Activity", "Settings"], "active": "Overview"},
+    "chips": {"type": "chips", "items": ["All", "Open", "Closed"], "active": "All"},
+    "steps": {"type": "steps", "items": ["Plan", "Details", "Review"], "active": 1},
+    "pricing": {"type": "pricing", "tiers": [{"name": "Starter", "price": "$9", "period": "/mo", "features": ["1 project", "Email support"], "cta": "Choose"}, {"name": "Team", "price": "$29", "period": "/mo", "features": ["Unlimited", "SSO", "Priority support"], "cta": "Choose", "highlight": True}]},
+    "hero": {"type": "hero", "title": "Headline that sells it", "sub": "One sentence on the outcome your customer gets.", "cta": "Get started", "secondary": "See pricing", "align": "center"},
+    "features": {"type": "features", "cols": 3, "items": [{"icon": "⚡", "title": "Fast", "text": "Short benefit."}, {"icon": "🔒", "title": "Private", "text": "Short benefit."}, {"icon": "🧩", "title": "Composable", "text": "Short benefit."}]},
+    "image": {"type": "image", "label": "Image", "height": 180},
+    "timeline": {"type": "timeline", "items": [{"time": "09:00", "title": "Kickoff", "text": "Scope agreed"}, {"time": "11:30", "title": "Review", "text": "Two changes"}]},
+    "chat": {"type": "chat", "messages": [{"from": "them", "text": "Can you send the deck?"}, {"from": "me", "text": "On it — 10 min."}]},
+    "kv": {"type": "kv", "title": "Details", "items": [{"k": "Owner", "v": "Mara L."}, {"k": "Created", "v": "12 Jun"}, {"k": "Status", "v": "Active"}]},
+    "settings": {"type": "settings", "title": "Preferences", "items": [{"label": "Email digest", "sub": "Weekly summary", "on": True}, {"label": "Beta features", "sub": "Early access", "on": False}]},
+    "progress": {"type": "progress", "label": "Storage", "value": 64, "sub": "6.4 GB of 10 GB"},
+    "alert": {"type": "alert", "kind": "warning", "text": "Heads up — something needs attention."},
+    "search": {"type": "search", "placeholder": "Search…"},
+    "breadcrumbs": {"type": "breadcrumbs", "items": ["Home", "Projects", "Alpha"]},
+    "avatars": {"type": "avatars", "items": ["Mara L", "Theo P", "Nadia O"], "label": "+4 others"},
+    "calendar": {"type": "calendar", "month": "June", "highlight": [3, 12, 19]},
+    "tabbar": {"type": "tabbar", "items": [{"icon": "🏠", "label": "Home"}, {"icon": "🔍", "label": "Search"}, {"icon": "👤", "label": "Me"}], "active": "Home"},
+    "divider": {"type": "divider"},
+    "footer": {"type": "footer", "text": "© Acme Inc.", "links": ["Privacy", "Terms", "Status"]},
+    "text": {"type": "text", "text": "A paragraph of body text. Replace me."},
+}
+
+LIB_STYLE_ID = "ld-lib"
+
+
+def library(ds: dict | None = None) -> dict:
+    """Catalog for the drag-and-drop palette: fragments + the one stylesheet they need."""
+    css = _tokens_css((ds or {}).get("tokens") or {}, ds) + BASE_CSS
+    ctx = {"data": {}}
+    items = [{"id": k, "name": k.replace("-", " "), "html": render_node(v, ctx)} for k, v in SAMPLES.items()]
+    return {"css": css, "style_tag": f'<style data-{LIB_STYLE_ID}="1">{css}</style>', "items": items}

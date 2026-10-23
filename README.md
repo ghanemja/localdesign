@@ -24,6 +24,8 @@ lde                                                  # → http://127.0.0.1:7878
 | **Small local models** | *Spec engine*: the model writes a compact JSON layout, localdesign renders it with a built-in component library. A 4–8B model on Ollama produces consistent, finished screens. | Raw HTML from the model → small models produce broken pages |
 | **Your design system** | Import CSS variables, `tailwind.config.js`, design-tokens JSON, or component snippets. Every screen uses your tokens; the HTML engine reuses your exact component markup. | Generic Tailwind soup |
 | **Edit, don't regenerate** | Click any element: edit text inline, drag to reorder, resize, restyle, duplicate, delete, undo. Drag a block from variant B into variant A. Or select an element and tell the AI what to change about *just that*. | Regenerate the whole page and hope |
+| **Component & asset library** | ⊟ Library: 30+ built-in components rendered live, plus *your* uploaded logos/icons/images and brand HTML snippets. Drag any of them onto any screen. Generated screens are told about your assets and use them; exports inline them as data URIs. | No palette, no brand assets |
+| **Artifacts too** | Switch the prompt bar to **Artifact**: working single-file apps, calculators, charts, games, interactive docs — plain JS, no CDN. Same canvas, same editor, same exports. | Mockups only (or artifacts only) |
 | **Flows, not screens** | Paste a journey or a PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play the clickable prototype. | Isolated screens |
 | **Real data** | Paste JSON/CSV → tables and lists use your actual rows. | Lorem ipsum |
 | **Round trip** | In: PRD/ticket text. Out: design-spec Markdown, per-screen React (.jsx + .css), AI React + Tailwind, self-contained HTML. | HTML only |
@@ -40,6 +42,9 @@ lde                                                  # → http://127.0.0.1:7878
 **Spec engine.** The model wrote ~1.5 KB of JSON; localdesign rendered it. This is what makes 4–8B local models usable.
 
 <p><img src="docs/spec-desktop.png" width="68%" alt="Spec-engine desktop dashboard"> <img src="docs/spec-phone.png" width="21%" alt="Spec-engine phone screen"></p>
+
+**Artifacts.** "A tip calculator: bill amount, tip % buttons, split between N people" → a working app in one file, 41 s.
+![Tip calculator artifact](docs/artifact.png)
 
 **Anything, not just dashboards.** "Create an app for a math-based DJ board", HTML engine, three directions.
 ![Three DJ board variants](docs/variants-dj.png)
@@ -70,6 +75,9 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 - **Generate**: describe a screen → N variants (each with a different design direction) stream onto the canvas.
 - **Iterate**: click a screen, type a change → new version in place (`v3` badge cycles versions).
 - **Edit**: click inside a screen to select an element. Toolbar: text, style, ↑↓ reorder, duplicate, link, **✦ AI** (type a change for that element), delete. Double-click text to edit. Drag an element onto another screen to copy it there. ⌘Z undoes.
+- **Library** (⊟): drag built-in components, your uploaded assets (logo, icons, product shots) or brand snippets onto a screen. Assets live in `~/.localdesign/assets/<project>/` and are served at `/assets/…`; HTML exports inline them.
+- **Artifact** toggle (prompt bar): build an interactive app/tool/chart/game/document instead of a mockup. Iterate, edit and export it like any screen.
+- **Desktop / Tablet / Phone**: sets the width for new screens; with a screen selected it resizes that screen (spec screens re-render in the phone layout; HTML screens reflow — ↻ regenerates at the new width).
 - **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page; adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.

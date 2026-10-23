@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import queue
@@ -21,6 +22,9 @@ STATIC = Path(__file__).parent / "static"
 CFG = config.load()
 CFG_LOCK = threading.Lock()
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+SAFE_FILE = re.compile(r"^[a-zA-Z0-9_.-]{1,120}$")
+ASSET_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg", "image/x-icon": ".ico", "font/woff2": ".woff2", "font/woff": ".woff"}
+MIME_BY_EXT = {v: k for k, v in ASSET_TYPES.items()}
 ALLOWED_HOSTS: set[str] = set()   # filled in main(); guards against DNS rebinding + cross-site requests
 AUDIT_LOCK = threading.Lock()
 
@@ -67,26 +71,29 @@ def resolve_mode(cfg: dict, requested: str | None) -> str:
     return "html"
 
 
-def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None):
+def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None, assets=None, kind="screen"):
     for_spec = mode == "spec"
-    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec)) if x)
-    user = prompts.generate_user_prompt(brief, context) + ("\n\n" + extra if extra else "")
-    if for_spec:
+    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec), prompts.assets_prompt(assets)) if x)
+    verb = "Build this artifact:" if kind == "artifact" else None
+    user = prompts.generate_user_prompt(brief, context, verb) + ("\n\n" + extra if extra else "")
+    if kind == "artifact":
+        sys_p = prompts.artifact_system_prompt(width, cfg.get("allow_cdn", False)); mode = "html"
+    elif for_spec:
         sys_p = prompts.spec_system_prompt(width, direction)
     else:
         sys_p = prompts.system_prompt(width, direction, cfg.get("allow_cdn", False))
-    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, mode=mode, width=width, ds=ds, data=data)
+    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, mode=mode, width=width, ds=ds, data=data, kind="generate" if kind == "screen" else "artifact")
 
 
-def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None):
+def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None, assets=None, kind="screen"):
     if spec:
         sys_p = prompts.spec_system_prompt(width, None)
         extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, True), prompts.data_prompt(data, True)) if x)
         user = prompts.SPEC_ITERATE.format(spec=json.dumps(spec, separators=(",", ":")), instruction=instruction) + ("\n\n" + extra if extra else "")
         _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, temperature=0.4, kind="iterate", mode="spec", width=width, ds=ds, data=data)
         return
-    sys_p = prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
-    extra = prompts.design_system_prompt(ds, False)
+    sys_p = prompts.artifact_system_prompt(width, cfg.get("allow_cdn", False)) if kind == "artifact" else prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
+    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, False), prompts.assets_prompt(assets)) if x)
     msgs = [{"role": "user", "content": prompts.ITERATE.format(html=html, instruction=instruction) + ("\n\n" + extra if extra else "")}]
     _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=0.4, kind="iterate")
 
@@ -194,6 +201,17 @@ def _sse_multiplex(h, q: queue.Queue, n: int):
     h.wfile.flush()
 
 
+def _inline_assets(html: str) -> str:
+    def repl(m):
+        pid, fname = m.group(2), m.group(3)
+        f = config.ASSETS_DIR / pid / fname
+        if SAFE_ID.match(pid) and SAFE_FILE.match(fname) and f.is_file():
+            mime = MIME_BY_EXT.get(f.suffix.lower(), "application/octet-stream")
+            return f'{m.group(1)}data:{mime};base64,{base64.b64encode(f.read_bytes()).decode()}'
+        return m.group(0)
+    return re.sub(r'((?:src|href)=["\']?|url\(["\']?)/assets/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_.-]+)', repl, html)
+
+
 # ------------------------------------------------------------------- projects
 def _project_path(pid: str) -> Path:
     if not SAFE_ID.match(pid):
@@ -239,6 +257,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("index.html")
         if u.path.startswith("/static/"):
             return self._static(u.path[len("/static/"):])
+        if u.path.startswith("/assets/"):
+            parts = u.path.split("/")
+            if len(parts) == 4 and SAFE_ID.match(parts[2]) and SAFE_FILE.match(parts[3]):
+                f = config.ASSETS_DIR / parts[2] / parts[3]
+                if f.is_file():
+                    data = f.read_bytes()
+                    self.send_response(200); self.send_header("Content-Type", MIME_BY_EXT.get(f.suffix.lower(), "application/octet-stream"))
+                    self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "max-age=3600"); self.end_headers(); self.wfile.write(data); return
+            return self.send_error(404)
         if u.path == "/favicon.ico":  # srcdoc iframes ask for this
             self.send_response(204); self.end_headers(); return
         if u.path == "/api/config":
@@ -317,13 +344,36 @@ class Handler(BaseHTTPRequestHandler):
             n = max(1, min(int(body.get("variants") or cfg.get("variants", 3)), 6))
             width = int(body.get("width") or 1280)
             context = body.get("context") or None
-            mode = resolve_mode(cfg, body.get("mode"))
-            ds, data = body.get("design_system") or None, body.get("data") or None
+            kind = "artifact" if body.get("kind") == "artifact" else "screen"
+            mode = "html" if kind == "artifact" else resolve_mode(cfg, body.get("mode"))
+            ds, data, assets = body.get("design_system") or None, body.get("data") or None, body.get("assets") or None
             q: queue.Queue = queue.Queue()
             for i in range(n):
-                direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if n > 1 else None
-                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data), daemon=True).start()
+                direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if (n > 1 and kind == "screen") else None
+                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/library":
+            return _json(self, components.library(body.get("design_system") or None))
+        if u.path == "/api/assets":   # {project, name, type, data(base64)} → stored under ~/.localdesign/assets/<project>/
+            pid, name, ctype, b64 = body.get("project") or "", body.get("name") or "asset", body.get("type") or "", body.get("data") or ""
+            if not SAFE_ID.match(pid):
+                return _json(self, {"error": "bad project id"}, 400)
+            ext = ASSET_TYPES.get(ctype)
+            if not ext:
+                return _json(self, {"error": f"unsupported type {ctype}; use png/jpg/gif/webp/svg/ico/woff2"}, 400)
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return _json(self, {"error": "bad base64"}, 400)
+            if len(raw) > 8 * 1024 * 1024:
+                return _json(self, {"error": "asset over 8 MB"}, 400)
+            stem = re.sub(r"[^a-zA-Z0-9_-]+", "-", os.path.splitext(name)[0]).strip("-")[:60] or "asset"
+            fname = f"{stem}-{uuid.uuid4().hex[:6]}{ext}"
+            d = config.ASSETS_DIR / pid; d.mkdir(parents=True, exist_ok=True)
+            (d / fname).write_bytes(raw)
+            return _json(self, {"url": f"/assets/{pid}/{fname}", "name": stem, "type": ctype, "size": len(raw)})
+        if u.path == "/api/inline":   # replace /assets/... references with data URIs so exported HTML is self-contained
+            return _json(self, {"html": _inline_assets(body.get("html") or "")})
         if u.path == "/api/export/react":
             html, title = body.get("html") or "", body.get("title") or "Screen"
             if "<" not in html:
@@ -401,7 +451,7 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = dict(CFG)
             width = int(body.get("width") or 1280)
             q: queue.Queue = queue.Queue()
-            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None), daemon=True).start()
+            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None, body.get("assets") or None, "artifact" if body.get("kind") == "artifact" else "screen"), daemon=True).start()
             return _sse_multiplex(self, q, 1)
         if u.path == "/api/projects":
             pid = body.get("id") or uuid.uuid4().hex[:10]
@@ -420,6 +470,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._guard(True):
             return
         u = urlparse(self.path)
+        if u.path.startswith("/assets/"):
+            parts = u.path.split("/")
+            if len(parts) == 4 and SAFE_ID.match(parts[2]) and SAFE_FILE.match(parts[3]):
+                try:
+                    (config.ASSETS_DIR / parts[2] / parts[3]).unlink(); return _json(self, {"ok": True})
+                except FileNotFoundError:
+                    pass
+            return _json(self, {"error": "not found"}, 404)
         if u.path.startswith("/api/projects/"):
             try:
                 _project_path(u.path.rsplit("/", 1)[1]).unlink()
