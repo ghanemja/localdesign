@@ -6,6 +6,12 @@ including small local models · generates in *your* design system · zero depend
 
 A local, provider-agnostic take on Claude Design. One `pip install`, one command, no Electron, no telemetry.
 
+[![CI](https://github.com/ghanemja/localdesign/actions/workflows/ci.yml/badge.svg)](https://github.com/ghanemja/localdesign/actions/workflows/ci.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![MIT](https://img.shields.io/badge/license-MIT-black)
+
+![Three variants of a solar-fleet dashboard, generated from one prompt](docs/variants-solar.png)
+*One prompt → three design directions. "Dashboard for a solar-panel fleet operator: left nav, KPI row, daily output chart, alerts table, site list."*
+
 ```bash
 uv tool install --editable /path/to/localdesign      # or: pipx install . / pip install .
 lde                                                  # → http://127.0.0.1:7878
@@ -22,6 +28,21 @@ lde                                                  # → http://127.0.0.1:7878
 | **Real data** | Paste JSON/CSV → tables and lists use your actual rows. | Lorem ipsum |
 | **Round trip** | In: PRD/ticket text. Out: design-spec Markdown, per-screen React (.jsx + .css), AI React + Tailwind, self-contained HTML. | HTML only |
 | **Air-gap ready** | Stdlib Python server + vanilla JS, no CDN in generated output (optional), audit log of every model call, Origin/Host guard, works behind corporate proxies with any OpenAI-compatible endpoint. | Cloud or Electron |
+
+## In pictures
+
+**Generate in your design system, with your data.** Tokens imported from `:root` CSS; the orders table is a pasted CSV.
+![Orders screen rendered with the Acme design system and real CSV rows](docs/designsystem.png)
+
+**Flows.** A one-line checkout description → four planned screens, generated with navigation links, arrows on the canvas, ▶ Play to click through.
+![Four linked checkout screens with flow arrows](docs/flow.png)
+
+**Spec engine.** The model wrote ~1.5 KB of JSON; localdesign rendered it. This is what makes 4–8B local models usable.
+
+<p><img src="docs/spec-desktop.png" width="68%" alt="Spec-engine desktop dashboard"> <img src="docs/spec-phone.png" width="21%" alt="Spec-engine phone screen"></p>
+
+**Anything, not just dashboards.** "Create an app for a math-based DJ board", HTML engine, three directions.
+![Three DJ board variants](docs/variants-dj.png)
 
 ## Backends
 
@@ -72,6 +93,15 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 | 30B+ / hosted frontier | excellent, 30–60 s | excellent, 10–15 s |
 
 Claude models: reasoning effort defaults to **low** for generation (deep thinking adds minutes of silent latency and doesn't improve mockups); change it in Settings.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest                      # 113 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
+```
+
+CI runs the suite on Linux, Windows and macOS × Python 3.10/3.12/3.13 and checks the built wheel ships the static app.
 
 ## Layout
 
