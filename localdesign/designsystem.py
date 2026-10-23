@@ -51,7 +51,7 @@ def parse(text: str, kind: str = "auto") -> dict:
 
 
 # ----------------------------------------------------------------------------- css
-_VAR = re.compile(r"--([a-zA-Z0-9_-]+)\s*:\s*([^;]+);")
+_VAR = re.compile(r"--([a-zA-Z0-9_-]+)\s*:\s*([^;}]+);?")
 _ROOT = re.compile(r":root\s*\{([^}]*)\}", re.S)
 _FONT_FAMILY = re.compile(r"font-family\s*:\s*([^;}]+)")
 

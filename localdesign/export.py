@@ -105,7 +105,7 @@ class _JSX(HTMLParser):
             if "\n" in data:
                 self.out.append("\n")
             return
-        txt = data.replace("{", "{'{'}").replace("}", "{'}'}")
+        txt = re.sub(r"[{}]", lambda m: "{'{'}" if m.group(0) == "{" else "{'}'}", data)
         self.out.append(txt)
 
     def handle_entityref(self, name):

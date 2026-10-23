@@ -756,8 +756,10 @@
   // ------------------------------------------------------------ boot
   (async () => {
     await loadConfig();
-    const last = localStorage.getItem("ld.last");
+    const qp = new URLSearchParams(location.search);
+    const last = qp.get("project") || localStorage.getItem("ld.last");
     if (!(last && await loadProject(last))) renderAll();
+    if (qp.get("fit")) setTimeout(fitAll, 400);
     if (!cfg.model) { toast("Set a model in Settings (top right) to start.", 5000); }
     promptEl.focus();
   })();

@@ -756,8 +756,8 @@ def repair_json(text: str) -> str:
         s += "null"
     elif s.endswith(","):
         s = s[:-1]
-    else:
-        # a closed string right after '{' or ',' is a key with no value
+    elif stack and stack[-1] == "}":
+        # inside an object, a closed string right after '{' or ',' is a key with no value
         m = re.search(r'[{,]\s*"(?:[^"\\]|\\.)*"\s*$', s)
         if m:
             s += ":null"

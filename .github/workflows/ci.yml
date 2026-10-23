@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e . pytest
+      - name: Unit + server tests (mock model, no API key)
+        run: python -m pytest -q
+      - name: CLI smoke
+        run: lde --version
+      - name: Build wheel includes static files
+        shell: bash
+        run: |
+          python -m pip install build
+          python -m build --wheel -q
+          python - <<'PY'
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          st = [n for n in names if "/static/" in n]
+          assert {"index.html", "app.js", "app.css", "editor.js"} <= {n.split("/")[-1] for n in st}, st
+          print("static files ok:", len(st))
+          PY
