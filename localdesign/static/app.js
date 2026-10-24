@@ -30,7 +30,7 @@
     const c = project.camera;
     canvas.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.z})`;
     viewport.style.backgroundPosition = `${c.x}px ${c.y}px`;
-    viewport.style.backgroundSize = `${24 * c.z}px ${24 * c.z}px`;
+    viewport.style.backgroundSize = c.z < 0.25 ? `${96 * c.z}px ${96 * c.z}px` : `${24 * c.z}px ${24 * c.z}px`;   // coarser grid when zoomed far out
     $("#zoomLabel").textContent = Math.round(c.z * 100) + "%";
     scheduleSave();
   }
