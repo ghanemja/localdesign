@@ -338,6 +338,14 @@
     const post = async (url, body) => { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const d = await r.json(); if (d.error) throw new Error(d.error); return d; };
     try {
       if (kind === "json") download(`${slug(project.name)}.localdesign.json`, JSON.stringify(project, null, 2), "application/json");
+      else if (kind === "pack") {
+        if (!project.screens.some(x => x.html)) { toast("Nothing to export yet"); return; }
+        await save();
+        const r = await fetch("/api/export/pack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project }) });
+        if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+        const blob = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${slug(project.name)}-pack.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        toast("Implementation pack exported — drop the folder into your repo and point your agent at ARCHITECTURE.md", 5000);
+      }
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
       else if (kind === "html") download(`${slug(s.title)}.html`, await inlined(s.html), "text/html");
       else if (kind === "html-all") { for (const sc of project.screens.filter(x => x.html)) { download(`${slug(sc.title)}.html`, await inlined(sc.html), "text/html"); await new Promise(r => setTimeout(r, 300)); } }
@@ -666,13 +674,26 @@
     }
   }
   function wireLibDrag(card, htmlFn, desc) {
+    card.setAttribute("draggable", "false"); card.querySelectorAll("img").forEach(i => i.setAttribute("draggable", "false"));
+    card.addEventListener("dragstart", e => e.preventDefault());
+    card.addEventListener("mousedown", e => { if (e.button === 0) e.preventDefault(); });   // no text selection / native drag
     card.addEventListener("pointerdown", e => {
-      if (e.button !== 0) return; e.preventDefault();
-      const st = { x: e.clientX, y: e.clientY };
-      const mv = ev => { if (Math.hypot(ev.clientX - st.x, ev.clientY - st.y) > 6) { window.removeEventListener("pointermove", mv); startXDrag("library", htmlFn(), desc); } };
-      const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
+      if (e.button !== 0 || e.target.closest("button")) return; e.preventDefault();
+      const st = { x: e.clientX, y: e.clientY }; let moved = false;
+      const mv = ev => { if (Math.hypot(ev.clientX - st.x, ev.clientY - st.y) > 6) { moved = true; window.removeEventListener("pointermove", mv); startXDrag("library", htmlFn(), desc); } };
+      const up = () => {
+        window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up);
+        if (!moved) insertIntoSelected(htmlFn(), desc);      // plain click = insert at the end of the selected screen
+      };
       window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
     });
+  }
+  function insertIntoSelected(html, desc) {
+    const s = selected && screenById(selected);
+    if (!s || !s.html) { toast("Click a screen first, then click a component to add it (or drag it onto a screen).", 3500); return; }
+    const el = frames.get(s.id), r = $("iframe", el).getBoundingClientRect(), z = project.camera.z;
+    postFrame(s.id, { type: "drop", html, x: 20, y: Math.max(10, (r.height / z) - 40) });   // near the bottom of the visible area
+    toast(`Added ${desc} to ${s.title}`, 1800);
   }
   $("#assetUpload").addEventListener("click", () => $("#assetFile").click());
   $("#assetFile").addEventListener("change", async e => {

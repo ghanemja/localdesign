@@ -38,6 +38,7 @@
       <button class="ghost" id="exportBtn" title="Export">Export ▾</button>
       <div id="exportMenu" class="menu hidden">
         <button data-x="json">Project (.json)</button>
+        <button data-x="pack"><b>Implementation pack</b> (.zip of Markdown for a coding agent)</button>
         <button data-x="spec">Design spec (.md)</button>
         <div class="sep"></div>
         <button data-x="html">Selected screen → HTML</button>
@@ -58,7 +59,7 @@
     <span class="grow"></span>
     <button class="ic" id="libClose" title="Close">×</button>
   </div>
-  <p class="muted small libhint">Drag anything onto a screen. Components take the current design system's tokens.</p>
+  <p class="muted small libhint"><b>Drag</b> an item onto a screen, or <b>select a screen and click</b> an item to add it. Components take the current design system's tokens.</p>
   <div id="libComponents" class="libgrid"></div>
   <div id="libAssets" class="hidden">
     <div class="row">

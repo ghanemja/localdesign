@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, components, config, designsystem, export, llm, prompts
+from . import __version__, components, config, designsystem, export, llm, pack, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -374,6 +374,24 @@ class Handler(BaseHTTPRequestHandler):
             return _json(self, {"url": f"/assets/{pid}/{fname}", "name": stem, "type": ctype, "size": len(raw)})
         if u.path == "/api/inline":   # replace /assets/... references with data URIs so exported HTML is self-contained
             return _json(self, {"html": _inline_assets(body.get("html") or "")})
+        if u.path == "/api/export/pack":   # → zip of Markdown docs + reference HTML for an implementing agent
+            proj = body.get("project")
+            if not isinstance(proj, dict):
+                return _json(self, {"error": "need project"}, 400)
+            files = []
+            pid = proj.get("id") or ""
+            if SAFE_ID.match(pid) and (config.ASSETS_DIR / pid).is_dir():
+                for f in sorted((config.ASSETS_DIR / pid).iterdir()):
+                    if f.is_file() and SAFE_FILE.match(f.name):
+                        files.append((f.name, f.read_bytes()))
+            data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{re.sub(r"[^a-zA-Z0-9_-]+", "-", proj.get("name") or "design")}-pack.zip"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if u.path == "/api/export/react":
             html, title = body.get("html") or "", body.get("title") or "Screen"
             if "<" not in html:

@@ -171,3 +171,7 @@ body { flex-direction: column; }
 #viewport.withlib { margin-left: 320px; }
 #libBtn { white-space: nowrap; }
 body:has(#library:not(.hidden)) #promptBar { left: calc(50% + 160px); width: min(720px, calc(100% - 352px)); }
+
+.libitem, .libitem * { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; }
+.libitem .lbl::before { content: "⠿"; color: var(--muted); margin-right: 4px; }
+#library .libhint b { color: var(--ink); }
