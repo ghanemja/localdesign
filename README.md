@@ -28,6 +28,7 @@ lde                                                  # → http://127.0.0.1:7878
 | **Artifacts too** | Switch the prompt bar to **Artifact**: working single-file apps, calculators, charts, games, interactive docs — plain JS, no CDN. Same canvas, same editor, same exports. | Mockups only (or artifacts only) |
 | **Flows, not screens** | Paste a journey or a PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play the clickable prototype. | Isolated screens |
 | **Real data** | Paste JSON/CSV → tables and lists use your actual rows. | Lorem ipsum |
+| **Implementation pack** | Export ▾ → a zip of Markdown an engineer *or a small local model* can build from: `ARCHITECTURE.md` (inventory, navigation graph, inferred data model), `DESIGN_SYSTEM.md`, `FLOWS.md`, `DATA.md`, `IMPLEMENTATION_PLAN.md`, `AGENTS.md` (rules for the agent), per-screen docs with props, exact markup and verbatim copy, reference HTML, `tokens.css`, `components.css`, assets. Deterministic, no model call, runs offline. Built for teams (government, healthcare) that can't use frontier tooling. | HTML files |
 | **Round trip** | In: PRD/ticket text. Out: design-spec Markdown, per-screen React (.jsx + .css), AI React + Tailwind, self-contained HTML. | HTML only |
 | **Air-gap ready** | Stdlib Python server + vanilla JS, no CDN in generated output (optional), audit log of every model call, Origin/Host guard, works behind corporate proxies with any OpenAI-compatible endpoint. | Cloud or Electron |
 
@@ -81,6 +82,7 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 - **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page; adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.
+- **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`.
 - **Export ▾**: project JSON, design spec (.md), HTML, React (.jsx + .css, deterministic), React + Tailwind (AI), all screens at once.
 - Canvas: drag to pan, ⌘/Ctrl+scroll to zoom, Space+drag, **Fit**, `/` focuses the prompt. Projects autosave to `~/.localdesign/projects/`.
 
