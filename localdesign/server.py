@@ -133,6 +133,89 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
         audit({**rec, "ok": False, "error": f"{type(e).__name__}: {e}"[:300], "secs": round(time.time() - t0, 1)})
 
 
+def _write_pack(zip_bytes: bytes, dest: str, replace: bool) -> tuple[str, int]:
+    """Extract a built pack into `dest`. Creates it; refuses a non-empty folder unless replace (then overwrites only pack files)."""
+    import zipfile, io
+    d = Path(os.path.expanduser(dest.strip()))
+    if not d.is_absolute():
+        raise ValueError("destination must be an absolute path (e.g. /Users/me/repo/design)")
+    if d.exists() and not d.is_dir():
+        raise ValueError("destination exists and is not a folder")
+    if d.is_dir() and any(d.iterdir()) and not replace:
+        raise ValueError("folder is not empty — tick “overwrite pack files” to write into it anyway")
+    d.mkdir(parents=True, exist_ok=True)
+    n = 0
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        for info in z.infolist():
+            target = (d / info.filename).resolve()
+            if d.resolve() not in target.parents:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(z.read(info))
+            n += 1
+    return str(d), n
+
+
+def _fetch_url(url: str, limit: int = 2_000_000, timeout: float = 10.0) -> tuple[bytes, str]:
+    """GET a http(s) URL with size cap. Returns (body, content-type). For design-system import from a running site."""
+    import urllib.request, urllib.error
+    if not re.match(r"^https?://", url, re.I):
+        raise ValueError("only http:// and https:// URLs")
+    req = urllib.request.Request(url, headers={"User-Agent": f"localdesign/{__version__}", "Accept": "text/html,text/css,*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read(limit + 1)[:limit], r.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"HTTP {e.code} fetching {url}") from None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise ValueError(f"cannot fetch {url}: {getattr(e, 'reason', e)}") from None
+
+
+def fetch_site_css(url: str) -> dict:
+    """Fetch a page, then its same-origin stylesheets; return {css, html, sheets:[urls], title}."""
+    from urllib.parse import urljoin, urlparse
+    body, ctype = _fetch_url(url)
+    text = body.decode("utf-8", errors="replace")
+    if "css" in ctype.lower() or url.lower().split("?")[0].endswith(".css"):
+        return {"css": text, "html": "", "sheets": [url], "title": ""}
+    origin = urlparse(url)
+    css_parts = re.findall(r"<style[^>]*>(.*?)</style>", text, re.S | re.I)
+    sheets = []
+    for tag in re.findall(r"<link\b[^>]*>", text, re.I):
+        if not re.search(r"rel\s*=\s*[\"']?[^\"'>]*stylesheet", tag, re.I):
+            continue
+        m = re.search(r"href\s*=\s*[\"']([^\"']+)", tag, re.I)
+        if not m:
+            continue
+        href = urljoin(url, m.group(1).strip())
+        if urlparse(href).netloc != origin.netloc:
+            continue   # same-origin only: skip CDNs / font services
+        sheets.append(href)
+    for href in sheets[:8]:
+        try:
+            css_parts.append(_fetch_url(href, limit=1_000_000)[0].decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+    t = re.search(r"<title[^>]*>(.*?)</title>", text, re.S | re.I)
+    return {"css": "\n".join(css_parts), "html": text, "sheets": sheets, "title": (t.group(1).strip() if t else "")[:80]}
+
+
+def _test_call(cfg: dict) -> dict:
+    """Tiny round-trip to the configured model: proves endpoint, key and model id work. Used by the settings dialog."""
+    if not cfg.get("model"):
+        return {"error": "no model set"}
+    t0 = time.time()
+    rec = {"kind": "test", "mode": "text", "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"), "prompt_chars": 60, "user_prompt": "connection test"}
+    try:
+        text = "".join(d for d in llm.stream({**cfg, "max_tokens": 64}, "You are a connection test.", [{"role": "user", "content": "Reply with exactly: OK"}], temperature=0) if isinstance(d, str))
+        secs = round(time.time() - t0, 1)
+        audit({**rec, "ok": True, "out_chars": len(text), "secs": secs})
+        return {"ok": True, "reply": " ".join(text.split())[:60], "secs": secs, "mode": resolve_mode(cfg, None)}
+    except llm.LLMError as e:
+        audit({**rec, "ok": False, "error": str(e)[:300], "secs": round(time.time() - t0, 1)})
+        return {"error": str(e)}
+
+
 def _pack_narrative(cfg: dict, proj: dict) -> tuple[str | None, str | None]:
     """One blocking model call writing the ARCHITECTURE.md overview. Returns (text, error)."""
     if not cfg.get("model"):
@@ -429,6 +512,14 @@ class Handler(BaseHTTPRequestHandler):
                 if err:
                     warnings.append("narrative skipped: " + err)
             data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files, screenshot_fn=shot_fn, narrative=narrative)
+            if body.get("dest"):   # write straight into a folder (e.g. <repo>/design) instead of downloading a zip
+                try:
+                    dest, n = _write_pack(data, str(body["dest"]), bool(body.get("replace")))
+                except ValueError as e:
+                    return _json(self, {"error": str(e)}, 400)
+                except OSError as e:
+                    return _json(self, {"error": f"cannot write there: {e.strerror or e}"}, 400)
+                return _json(self, {"dest": dest, "files": n, "warning": "; ".join(warnings) or None})
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{re.sub(r"[^a-zA-Z0-9_-]+", "-", proj.get("name") or "design")}-pack.zip"')
@@ -497,6 +588,25 @@ class Handler(BaseHTTPRequestHandler):
                 user += "\n\n" + ds_extra
             threading.Thread(target=_stream_to_queue, args=(cfg, 0, sys_p, [{"role": "user", "content": user}], q), kwargs={"temperature": 0.4, "kind": "element", "mode": "element"}, daemon=True).start()
             return _sse_multiplex(self, q, 1)
+        if u.path == "/api/test":   # settings → "Test": one tiny model call
+            with CFG_LOCK:
+                cfg = dict(CFG)
+            out = _test_call(cfg)
+            return _json(self, out, 200 if out.get("ok") else 502)
+        if u.path == "/api/ds/fetch":   # design system from a running site: page + same-origin stylesheets → tokens
+            url = str(body.get("url") or "").strip()
+            if not url:
+                return _json(self, {"error": "need url"}, 400)
+            try:
+                site = fetch_site_css(url)
+                parsed = designsystem.parse(site["css"], "css") if site["css"].strip() else {"kind": "css", "tokens": {}, "palette": [], "css": ""}
+                if len(parsed.get("tokens") or {}) < 2 and site["html"]:
+                    alt = designsystem.parse(site["html"], "html")
+                    if len(alt.get("tokens") or {}) > len(parsed.get("tokens") or {}):
+                        parsed = {**alt, "kind": "html"}
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
+            return _json(self, {**parsed, "source_css": site["css"][:200000], "sheets": site["sheets"], "title": site["title"]})
         if u.path == "/api/ds/parse":
             try:
                 return _json(self, designsystem.parse(str(body.get("text") or ""), body.get("kind") or "auto"))

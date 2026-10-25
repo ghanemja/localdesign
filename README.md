@@ -82,11 +82,12 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 - **Library** (⊟): drag built-in components, your uploaded assets (logo, icons, product shots) or brand snippets onto a screen. Assets live in `~/.localdesign/assets/<project>/` and are served at `/assets/…`; HTML exports inline them.
 - **Artifact** toggle (prompt bar): build an interactive app/tool/chart/game/document instead of a mockup. Iterate, edit and export it like any screen.
 - **Desktop / Tablet / Phone**: sets the width for new screens; with a screen selected it resizes that screen (spec screens re-render in the phone layout; HTML screens reflow — ↻ regenerates at the new width).
-- **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page; adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
+- **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page, or **fetch a running site** (page + its same-origin stylesheets → tokens); adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.
-- **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`; when it says it is done, *"Run design/VERIFY.md and report pass/fail per line."* Options: per-screen PNG screenshots (needs Chrome, Chromium or Edge on the machine — `LD_CHROME=/path/to/chrome` to point at one) and a model-written overview at the top of `ARCHITECTURE.md` (the only part of the pack that calls the model).
+- **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`; when it says it is done, *"Run design/VERIFY.md and report pass/fail per line."* Options: per-screen PNG screenshots (needs Chrome, Chromium or Edge on the machine — `LD_CHROME=/path/to/chrome` to point at one), a model-written overview at the top of `ARCHITECTURE.md` (the only part of the pack that calls the model), and writing straight into a folder (e.g. `<repo>/design`) instead of downloading a zip.
 - **Export ▾**: project JSON, design spec (.md), HTML, React (.jsx + .css, deterministic), React + Tailwind (AI), all screens at once.
+- **Settings** (top right): pick a preset, **Fetch** the model list, **Test** (one tiny call proves endpoint, key and model). With no model configured the dialog opens by itself on first run.
 - Canvas: drag to pan, ⌘/Ctrl+scroll to zoom, Space+drag, **Fit**, `/` focuses the prompt. Projects autosave to `~/.localdesign/projects/`.
 
 ## Security & privacy
@@ -111,7 +112,7 @@ Claude models: reasoning effort defaults to **low** for generation (deep thinkin
 
 ```bash
 pip install -e ".[dev]"
-pytest                      # 129 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
+pytest                      # 133 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
 ```
 
 CI runs the suite on Linux, Windows and macOS × Python 3.10/3.12/3.13 and checks the built wheel ships the static app.

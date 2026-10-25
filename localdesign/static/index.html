@@ -107,6 +107,7 @@
 <dialog id="settings">
   <form method="dialog" id="settingsForm">
     <h2>Model &amp; endpoint</h2>
+    <p id="firstRun" class="muted small hidden">Welcome. Three steps: <b>1</b> pick a preset (Ollama / LM Studio / vLLM for local, or Anthropic / any OpenAI-compatible URL) · <b>2</b> <b>Fetch</b> the model list and pick one · <b>3</b> <b>Test</b>, then Save. Nothing leaves this machine except calls to the endpoint you choose.</p>
     <label>Provider preset
       <select name="provider" id="providerSel"></select>
     </label>
@@ -116,6 +117,7 @@
         <input name="model" list="modelList" placeholder="model id">
         <datalist id="modelList"></datalist>
         <button type="button" id="fetchModels" class="ghost">Fetch</button>
+        <button type="button" id="testModel" class="ghost" title="One tiny model call to prove endpoint, key and model work">Test</button>
       </div>
       <span id="modelsMsg" class="muted small"></span>
     </label>
@@ -140,6 +142,8 @@
   <p class="muted small">Always included: <code>ARCHITECTURE.md</code>, <code>DESIGN_SYSTEM.md</code>, <code>FLOWS.md</code>, <code>DATA.md</code>, <code>IMPLEMENTATION_PLAN.md</code>, <code>AGENTS.md</code>, <code>VERIFY.md</code>, per-screen docs + HTML, <code>tokens.css</code>, <code>components.css</code>, assets. Deterministic, offline.</p>
   <label class="check"><input id="packShots" type="checkbox"> <span>Screenshot every screen → <code>screens/&lt;name&gt;.png</code> <span id="packShotsNote" class="muted small"></span></span></label>
   <label class="check"><input id="packNarrative" type="checkbox"> <span>Model-written overview at the top of <code>ARCHITECTURE.md</code> <span class="muted small">(one model call; everything else stays derived from the designs)</span></span></label>
+  <label>Write into a folder instead of downloading <span class="muted small">(optional — absolute path, e.g. <code>/Users/me/myapp/design</code>)</span><input id="packDest" placeholder="leave empty to download a .zip"></label>
+  <label class="check"><input id="packReplace" type="checkbox"> <span>Overwrite pack files if the folder is not empty <span class="muted small">(other files are left alone)</span></span></label>
   <p id="packMsg" class="muted small"></p>
   <menu>
     <button type="button" class="ghost" id="packCancel">Cancel</button>
@@ -170,6 +174,7 @@
       <select id="dsKind"><option value="auto">auto-detect</option><option value="css">CSS variables (:root)</option><option value="tailwind">tailwind.config.js</option><option value="tokens">Design tokens JSON</option><option value="html">HTML page / component</option></select>
     </label>
   </div>
+  <div class="inline"><input id="dsUrl" placeholder="…or fetch from a running site: http://design.internal/  (page + its same-origin stylesheets)"><button type="button" class="ghost" id="dsFetch">Fetch →</button></div>
   <label>Paste source <textarea id="dsSource" rows="6" placeholder=":root { --brand: #5b4bff; --bg: #f7f7fb; ... }   or   module.exports = { theme: { extend: { colors: {...} } } }   or   { &quot;color&quot;: { &quot;primary&quot;: { &quot;$value&quot;: &quot;#…&quot; } } }"></textarea></label>
   <div class="row"><button type="button" class="ghost" id="dsParse">Parse →</button><span id="dsMsg" class="muted small"></span></div>
   <h3>Tokens</h3>

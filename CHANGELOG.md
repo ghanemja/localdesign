@@ -28,6 +28,10 @@ Hover/select, inline text edit, style popover, reorder, duplicate, delete, link,
 Journey or PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play.
 
 ### Also
+- Settings → **Test**: one tiny model call proves endpoint, key and model; first run opens Settings with a 3-step hint when no model is set.
+- Design system → **Fetch** from a running site URL (page + same-origin stylesheets → tokens, palette, CSS).
+- Implementation pack → write into a folder (`<repo>/design`) instead of downloading.
+- Spec renderer tolerates CSS-length tokens (`"radius": "10px"`).
 - Design-system import (CSS vars / `tailwind.config.js` / tokens JSON / HTML page) and real data sources (JSON / CSV).
 - Device buttons resize the selected screen; spec screens re-render per device.
 - Exports: design-spec Markdown, React (.jsx + .css, deterministic), React + Tailwind (AI), self-contained HTML, project JSON.

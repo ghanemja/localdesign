@@ -115,3 +115,42 @@ def test_audit_log_written(app):
     assert config.AUDIT_PATH.exists()
     last = json.loads(config.AUDIT_PATH.read_text().strip().splitlines()[-1])
     assert "kind" in last and "model" in last and "ts" in last
+
+
+# ----------------------------------------------------------------------------- connection test + design system from a URL
+def test_connection_test_endpoint(app):
+    from tests.helpers import post
+    st, d = post(app + "/api/test", {})
+    assert st == 200 and d["ok"] is True and d["reply"] == "OK" and d["mode"] in ("html", "spec") and "secs" in d
+
+
+def test_ds_fetch_from_site(app):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from tests.helpers import post
+    PAGE = b'<html><head><title>Acme Portal</title><link rel="stylesheet" href="/static/site.css"><link rel="stylesheet" href="https://fonts.example/css"><style>:root{--radius:12px}</style></head><body><h1>Hi</h1></body></html>'
+    CSS = b':root{--brand:#5b4bff;--bg:#f7f7fb;--text:#121417}body{font-family:Inter,sans-serif}'
+    hits = []
+    class Site(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_GET(self):
+            hits.append(self.path)
+            body, ct = (PAGE, "text/html") if self.path == "/" else (CSS, "text/css") if self.path == "/static/site.css" else (b"nope", "text/plain")
+            self.send_response(200 if body != b"nope" else 404); self.send_header("Content-Type", ct); self.end_headers(); self.wfile.write(body)
+    import socket
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Site); srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        st, d = post(app + "/api/ds/fetch", {"url": f"http://127.0.0.1:{port}/"})
+        assert st == 200, d
+        assert d["title"] == "Acme Portal" and d["sheets"] == [f"http://127.0.0.1:{port}/static/site.css"]     # same-origin only
+        assert d["tokens"].get("primary") == "#5b4bff" and d["tokens"].get("bg") == "#f7f7fb" and "--brand:#5b4bff" in d["source_css"]
+        assert "/static/site.css" in hits and not any("fonts.example" in h for h in hits)
+        st, d = post(app + "/api/ds/fetch", {"url": f"http://127.0.0.1:{port}/static/site.css"})     # a bare stylesheet works too
+        assert st == 200 and d["tokens"].get("primary") == "#5b4bff"
+        assert post(app + "/api/ds/fetch", {"url": f"http://127.0.0.1:{port}/missing"})[0] == 400
+        assert post(app + "/api/ds/fetch", {"url": "ftp://x/y"})[0] == 400
+        assert post(app + "/api/ds/fetch", {"url": ""})[0] == 400
+    finally:
+        srv.shutdown()

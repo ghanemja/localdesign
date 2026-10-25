@@ -342,7 +342,7 @@
         if (!project.screens.some(x => x.html)) { toast("Nothing to export yet"); return; }
         $("#packShots").disabled = !cfg.chrome; if (!cfg.chrome) $("#packShots").checked = false;
         $("#packShotsNote").textContent = cfg.chrome ? "" : "— no headless Chrome/Chromium/Edge found on this machine (install one, or set LD_CHROME)";
-        $("#packNarrative").disabled = !cfg.model; $("#packMsg").textContent = ""; $("#packDlg").showModal();
+        $("#packNarrative").disabled = !cfg.model; $("#packMsg").textContent = ""; $("#packDest").value = localStorage.getItem("ld.packDest") || ""; $("#packDlg").showModal();
       }
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
       else if (kind === "html") download(`${slug(s.title)}.html`, await inlined(s.html), "text/html");
@@ -366,7 +366,7 @@
   });
   $("#packCancel").addEventListener("click", () => $("#packDlg").close());
   $("#packGo").addEventListener("click", async () => {
-    const opts = { screenshots: $("#packShots").checked, narrative: $("#packNarrative").checked };
+    const opts = { screenshots: $("#packShots").checked, narrative: $("#packNarrative").checked, dest: $("#packDest").value.trim() || undefined, replace: $("#packReplace").checked || undefined };
     if (opts.narrative && goBtn.disabled) { toast("Wait for the current generation to finish."); return; }
     const btn = $("#packGo"); btn.disabled = true;
     $("#packMsg").textContent = opts.narrative ? "Writing the overview with the model, then packing…" : opts.screenshots ? "Rendering screenshots…" : "Packing…";
@@ -375,6 +375,11 @@
       await save();
       const r = await fetch("/api/export/pack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project, ...opts }) });
       if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      if (opts.dest) {
+        const d = await r.json(); $("#packDlg").close(); try { localStorage.setItem("ld.packDest", opts.dest); } catch {}
+        toast((d.warning ? "Pack written, but: " + d.warning + " — " : "") + `${d.files} files written to ${d.dest}. Tell your agent: "Read ${d.dest.replace(/\/$/, "")}/AGENTS.md and follow it."`, d.warning ? 9000 : 7000);
+        return;
+      }
       const warn = r.headers.get("X-LD-Warning");
       const blob = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${slug(project.name)}-pack.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       $("#packDlg").close();
@@ -760,6 +765,17 @@
     });
   }
   $("#dsAddComp").addEventListener("click", () => { (dsDraft.components ||= []).push({ name: "", description: "", html: "" }); dsRenderComps(); });
+  $("#dsFetch").addEventListener("click", async () => {
+    const url = $("#dsUrl").value.trim(); if (!url) { $("#dsMsg").textContent = "Enter a URL first."; return; }
+    $("#dsMsg").textContent = "fetching…";
+    const r = await fetch("/api/ds/fetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    const d = await r.json(); if (d.error) { $("#dsMsg").textContent = d.error; return; }
+    if (!$("#dsName").value && d.title) $("#dsName").value = d.title;
+    $("#dsSource").value = d.source_css || ""; $("#dsKind").value = "css";
+    const cur = dsReadTokens(); dsFillTokens({ ...cur, ...d.tokens }); dsDraft.palette = d.palette || []; dsRenderPalette(dsDraft.palette);
+    if (d.css && !$("#dsCss").value) $("#dsCss").value = d.css;
+    $("#dsMsg").textContent = `${d.sheets.length} stylesheet${d.sheets.length === 1 ? "" : "s"} · ${Object.keys(d.tokens).length} tokens, ${(d.palette || []).length} colors found — adjust below`;
+  });
   $("#dsParse").addEventListener("click", async () => {
     const text = $("#dsSource").value; if (!text.trim()) { $("#dsMsg").textContent = "Paste something first."; return; }
     $("#dsMsg").textContent = "parsing…";
@@ -861,6 +877,15 @@
     $("#modelsMsg").textContent = `${d.models.length} models — start typing in the Model field`;
     if (!form.model.value && d.models.length) form.model.value = d.models[0];
   });
+  $("#testModel").addEventListener("click", async () => {
+    $("#modelsMsg").textContent = "testing…";
+    await postConfig({ provider: form.provider.value, base_url: form.base_url.value, model: form.model.value, api_key: form.api_key.value || undefined });
+    const t0 = Date.now();
+    try {
+      const r = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const d = await r.json();
+      $("#modelsMsg").textContent = d.ok ? `✓ ${cfg.model} answered “${d.reply}” in ${d.secs}s · engine auto → ${d.mode}. Save to start.` : "✗ " + d.error;
+    } catch (e) { $("#modelsMsg").textContent = "✗ " + e.message + ` (${((Date.now() - t0) / 1000).toFixed(1)}s)`; }
+  });
   async function postConfig(body) {
     const r = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     cfg = await r.json(); $("#modelLabel").textContent = cfg.model || "no model"; $("#modelDot").className = "dot " + (cfg.model ? "ok" : "bad");
@@ -881,7 +906,7 @@
     const last = qp.get("project") || localStorage.getItem("ld.last");
     if (!(last && await loadProject(last))) renderAll();
     if (qp.get("fit")) setTimeout(fitAll, 400);
-    if (!cfg.model) { toast("Set a model in Settings (top right) to start.", 5000); }
+    if (!cfg.model) { $("#firstRun").classList.remove("hidden"); openSettings(); } else $("#firstRun").classList.add("hidden");
     promptEl.focus();
   })();
 })();

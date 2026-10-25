@@ -147,3 +147,18 @@ def test_config_reports_chrome(app, monkeypatch):
     import urllib.request
     monkeypatch.setenv("LD_CHROME", "/definitely/not/a/browser")
     assert json.loads(urllib.request.urlopen(app + "/api/config").read())["chrome"] is False
+
+
+def test_pack_to_folder(app, tmp_path):
+    dest = tmp_path / "repo" / "design"
+    st, d = post(app + "/api/export/pack", {"project": PROJ, "dest": str(dest)})
+    assert st == 200 and d["dest"] == str(dest) and d["files"] >= 12 and d["warning"] is None
+    assert (dest / "AGENTS.md").is_file() and (dest / "screens" / "recipes.html").is_file() and (dest / "data" / "orders.json").is_file()
+    (dest / "notes.txt").write_text("mine")
+    st, d = post(app + "/api/export/pack", {"project": PROJ, "dest": str(dest)})
+    assert st == 400 and "not empty" in d["error"]
+    st, d = post(app + "/api/export/pack", {"project": PROJ, "dest": str(dest), "replace": True})
+    assert st == 200 and (dest / "notes.txt").read_text() == "mine"          # overwrite pack files only, never delete
+    assert post(app + "/api/export/pack", {"project": PROJ, "dest": "relative/path"})[0] == 400
+    f = tmp_path / "afile"; f.write_text("x")
+    assert post(app + "/api/export/pack", {"project": PROJ, "dest": str(f)})[0] == 400

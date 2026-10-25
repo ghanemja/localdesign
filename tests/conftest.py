@@ -50,6 +50,8 @@ class FakeLLM(BaseHTTPRequestHandler):
             reply = json.dumps([{"title": "First", "brief": "b1", "links": ["Second"]}, {"title": "Second", "brief": "b2", "links": []}, {"title": "Ghost", "brief": "x", "links": ["Nope"]}])
         elif "Convert this screen" in text:
             reply = "```jsx\nexport default function Mock(){ return <div className=\"p-4\">hi</div> }\n```"
+        elif "Reply with exactly: OK" in text:
+            reply = "OK"
         elif "Write the overview section" in text:
             reply = "Meal Kit lets a household pick a plan and then recipes.\n\n### Core loop\nPlan Selection → Recipes."
         elif "say TRUNCATE" in text:
