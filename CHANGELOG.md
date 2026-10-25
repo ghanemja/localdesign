@@ -27,6 +27,9 @@ Hover/select, inline text edit, style popover, reorder, duplicate, delete, link,
 ### Flows & prototype player
 Journey or PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play.
 
+### DESIGN.md
+Import a DESIGN.md (Google Labs / Stitch format: front matter tokens + fixed sections, `{token}` references resolved) as a design system, and export yours as DESIGN.md. The pack ships one. `verify.sh` in the pack runs every VERIFY.md check and exits with the fail count.
+
 ### Also
 - Settings → **Test**: one tiny model call proves endpoint, key and model; first run opens Settings with a 3-step hint when no model is set.
 - Design system → **Fetch** from a running site URL (page + same-origin stylesheets → tokens, palette, CSS).
