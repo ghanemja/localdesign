@@ -1,6 +1,6 @@
 # HANDOFF.md — state of localdesign for the next session
 
-_Last updated 2026-10-25 (session 2). Repo: https://github.com/ghanemja/localdesign. Session 2 work is pushed to branch `claude/optimistic-meitner-znm93v` (the cloud session could not push to `main`); merge it to `main` first — see **Release checklist** below._
+_Last updated 2026-10-25 (session 2, part 2). Repo: https://github.com/ghanemja/localdesign, branch `main`, CI green at `e556341`+. Everything below is pushed to `main`._
 
 ## What this is
 
@@ -18,7 +18,7 @@ Sibling project: `../localcode` — a zero-dep Claude Code clone (`lc`). Built f
 cd localdesign
 uv tool install --editable . --force      # installs `lde` (editable: code changes apply on restart; static files apply on reload)
 lde                                        # http://127.0.0.1:7878  (config in ~/.localdesign/config.json)
-uv run --with pytest pytest                # 133 tests, ~2 s, no API key needed (mock model server in tests/conftest.py)
+uv run --with pytest pytest                # 139 tests, ~2 s, no API key needed (mock model server in tests/conftest.py)
 ```
 
 Useful flags: `--port`, `--no-open`, `--provider ollama -m qwen2.5-coder:14b`, `--base-url … --api-key …`, `--no-audit`, `--host 0.0.0.0 --allow-host <name>`.
@@ -91,15 +91,21 @@ and synthetic pointer events. The user reported "can't see how to drag" before t
 - Multi-user: single process, single global config; fine for one person or a trusted LAN only.
 - `/api/ds/fetch` and pack `dest` are same-origin-guarded like every POST, but they do let the browser tab make the server fetch a URL / write a folder on the user's machine. Acceptable for a local single-user tool; document if `--host 0.0.0.0` becomes common.
 
-## Release checklist (v0.3.0)
+## Release checklist (v0.3.0) — the cloud session could not do these (tag push, release creation and PyPI are blocked for that session type)
 
 ```bash
-git checkout main && git merge --ff-only origin/claude/optimistic-meitner-znm93v && git push origin main   # wait for CI green
+git checkout main && git pull
 git tag -a v0.3.0 -m "localdesign 0.3.0" && git push origin v0.3.0
 rm -rf dist && uv build && uv publish          # needs UV_PUBLISH_TOKEN / ~/.pypirc; name `localdesign` was free
-gh release create v0.3.0 dist/* --title "localdesign 0.3.0" --notes-file <(sed -n '/^## 0.3.0/,/^## 0.2.0/p' CHANGELOG.md | sed '$d')
+gh release create v0.3.0 dist/* --title "localdesign 0.3.0" --notes-file docs/RELEASE-0.3.0.md
 ```
-Then replace the README install line (`uv tool install --editable /path/to/localdesign`) with `uv tool install localdesign` / `pipx install localdesign`.
+The README already says `uv tool install localdesign`; it is wrong until `uv publish` has run, so do this soon.
+
+## Session 2, part 2 (after the merge)
+- README repositioned: lead with regulated/offline, comparison table vs Open Design (nexu-io, Apache-2.0, 60–85k stars, drives Claude Code/Codex), Dyad (local Lovable), Claude Design/Stitch; "Air-gapped install" section (pip download → --no-index, Ollama model copy, LD_CHROME).
+- DESIGN.md (Google Labs / Stitch spec, alpha: YAML front matter `colors/typography/rounded/spacing/components`, `{token}` refs, fixed `##` sections Overview, Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's and Don'ts). `designsystem.yaml_subset` is a 60-line stdlib YAML-subset parser (maps, scalars, inline/block lists) — enough for front matter, not general YAML. Import via the DS dialog (auto-detected) or `/api/ds/parse kind=designmd`; export via Export ▾ → DESIGN.md (`/api/export/designmd`) and inside every pack.
+- Pack ships `verify.sh`: parses VERIFY.md's "- [ ] `cmd` — desc" lines, substitutes the src dir, prints PASS/FAIL/TODO, exits with the fail count. Tested end-to-end with a fake src tree.
+- Not done from the "do all of this" list: the small-model proof recording (needs Ollama + a Mac; recipe in the GIF notes above — swap `demo_llm.py` for the real `lde --provider ollama -m gemma3:4b`), and the release steps above.
 
 ## Ideas queue (user-approved direction: ship for regulated/offline teams)
 1. Real-mouse QA pass (editor, library drag, the three new dialogs), then the release checklist above.
