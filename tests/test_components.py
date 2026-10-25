@@ -97,3 +97,13 @@ def test_extract_json_raises_without_object():
 def test_links_become_data_link_attributes():
     html = C.render({"sections": [{"type": "buttons", "items": [{"label": "Go", "link": "Second"}]}]}, 1280)
     assert 'data-link="Second"' in html
+
+
+def test_tokens_radius_tolerates_css_strings():
+    from localdesign.components import _px, _tokens_css
+    assert _px("10px", 12) == 10 and _px("0.5rem", 12) == 8 and _px(" 6 ", 12) == 6 and _px("", 12) == 12 and _px(None, 12) == 12 and _px("round", 12) == 12 and _px(7.6, 12) == 7 and _px(-3, 12) == 0
+    css = _tokens_css({"radius": "10px"})
+    assert "--r:10px" in css
+    # the whole render path survives a design-system import that stored radius as a CSS length
+    html = C.render({"layout": "plain", "tokens": {"radius": "14px", "primary": "#123456"}, "sections": [{"type": "heading", "text": "Hi"}]}, 1280)
+    assert "--r:14px" in html and "Hi" in html

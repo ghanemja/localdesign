@@ -204,6 +204,19 @@ table.ld-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 """
 
 
+def _px(v, default: int) -> int:
+    """Tolerant integer pixels: 10, "10", "10px", "0.5rem" (→ 8), "" / None / garbage → default."""
+    if v is None or v == "" or isinstance(v, bool):
+        return default
+    if isinstance(v, (int, float)):
+        return max(0, int(v))
+    m = re.match(r"\s*(-?\d+(?:\.\d+)?)\s*(px|rem|em)?", str(v))
+    if not m:
+        return default
+    n = float(m.group(1)) * (16 if m.group(2) in ("rem", "em") else 1)
+    return max(0, int(round(n)))
+
+
 def _tokens_css(t: dict, ds: dict | None = None) -> str:
     """CSS variables from spec tokens (+ design-system overrides)."""
     t = {**(t or {})}
@@ -212,7 +225,7 @@ def _tokens_css(t: dict, ds: dict | None = None) -> str:
     dark = str(t.get("theme", "light")).lower() == "dark"
     primary = _color(t.get("primary"), "#2563eb")
     accent = _color(t.get("accent"), primary)
-    radius = int(t.get("radius", 12) or 12)
+    radius = _px(t.get("radius"), 12)
     compact = str(t.get("density", "normal")) == "compact"
     font = t.get("font") or "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif"
     if dark:
