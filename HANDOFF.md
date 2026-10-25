@@ -1,0 +1,94 @@
+# HANDOFF.md — state of localdesign for the next session
+
+_Last updated 2026-10-25. Repo: https://github.com/ghanemja/localdesign (branch `main`). Everything described here is pushed._
+
+## What this is
+
+A local, provider-agnostic Claude Design alternative, positioned for teams that can't use frontier/cloud tooling
+(government, healthcare, air-gapped). Prompt → UI screens on an infinite canvas · edit by hand or by chat ·
+works with any OpenAI-compatible endpoint or Anthropic · generates in the user's design system · zero runtime
+dependencies · exports an **implementation pack** (Markdown + reference HTML) that a human or a small local
+model can build the product from.
+
+Sibling project: `../localcode` — a zero-dep Claude Code clone (`lc`). Built first by mistake, kept as a bonus. Not the focus.
+
+## Run / develop
+
+```bash
+cd localdesign
+uv tool install --editable . --force      # installs `lde` (editable: code changes apply on restart; static files apply on reload)
+lde                                        # http://127.0.0.1:7878  (config in ~/.localdesign/config.json)
+uv run --with pytest pytest                # 122 tests, ~1 s, no API key needed (mock model server in tests/conftest.py)
+```
+
+Useful flags: `--port`, `--no-open`, `--provider ollama -m qwen2.5-coder:14b`, `--base-url … --api-key …`, `--no-audit`, `--host 0.0.0.0 --allow-host <name>`.
+Env: `LD_PROVIDER`, `LD_BASE_URL`, `LD_MODEL`, `LD_API_KEY`, `LD_HOME`.
+
+Machine facts: user's `ANTHROPIC_API_KEY` is set (saved config currently points at `anthropic` / `claude-opus-5`).
+Ollama has only `gemma3:4b` (slow: ~10 tok/s, 3-minute cold load; use the spec engine with it).
+The Claude desktop app's browser pane can drive the UI; screenshots there lag iframe paints by a few seconds.
+Headless Chrome (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless=new --screenshot=…`)
+works for docs screenshots via `http://127.0.0.1:7878/?project=<id>&fit=1`, but heavy HTML-engine iframes don't paint
+inside its virtual time budget — screenshot the screen HTML files directly and stitch with `ffmpeg hstack`.
+
+## Architecture (all stdlib Python + vanilla JS, no build step)
+
+```
+localdesign/
+  server.py        ThreadingHTTPServer. Static app, SSE generation, projects, config, assets, exports, Origin/Host guard, audit log
+  llm.py           urllib streaming: OpenAI-compatible + Anthropic Messages API; thinking status events; Truncated on max_tokens/length
+  prompts.py       html / spec / artifact / element / plan / export prompts; design-system, data and asset context blocks
+  components.py    spec engine: JSON layout → HTML via a 30-node component library; BASE_CSS; JSON repair; SAMPLES + library()
+  designsystem.py  CSS vars / tailwind.config.js / tokens JSON / HTML → tokens (+ palette, raw CSS)
+  export.py        HTML → React (.jsx + .css) deterministic; project → design-spec Markdown
+  pack.py          implementation pack (zip): ARCHITECTURE/DESIGN_SYSTEM/FLOWS/DATA/PLAN/AGENTS + per-screen docs + HTML + css + assets
+  config.py        presets, ~/.localdesign/config.json, LD_* env, paths (projects/, assets/, audit.jsonl)
+  static/
+    index.html     app shell: topbar, library panel, canvas, prompt bar, dialogs (settings, projects, design system, data, flow), player
+    app.css
+    app.js         the canvas app (~900 lines): camera, frames, generate/iterate/regenerate, editor bridge, library, DS/data dialogs, flows, player, exports
+    editor.js      shim injected into every screen iframe at display time (never saved): hover/select, text edit, style, reorder, drag/drop, serialize
+tests/             pytest; conftest.py has FakeLLM (OpenAI-compatible mock that answers by prompt content) + the app on a free port
+.github/workflows/ci.yml   Linux/Windows/macOS × Python 3.10/3.12/3.13 + wheel check — green
+docs/              README screenshots
+```
+
+### Key mechanics
+- **Engines**: `html` (model writes the page) / `spec` (model writes JSON, `components.render` renders it) / `auto` (spec for local providers under ~30B; `server.resolve_mode`). Artifacts (`kind: "artifact"`) always use html with `ARTIFACT_SYSTEM`.
+- **Streaming**: `/api/generate`, `/api/iterate`, `/api/iterate-element`, `/api/export/react-ai` are SSE; events `status` (thinking), `partial` (html + chars), `done` (html, spec?, mode, warning?), `error`, `end`. Spec partials come from `components.repair_json` + render.
+- **Project JSON** (`~/.localdesign/projects/<id>.json`): `{id, name, device, camera, designSystem, data, assets, screens:[{id,title,brief,x,y,width,kind,html,versions[],spec,specVersions[]}]}`. Autosaved by the client (debounced POST `/api/projects`). `?project=<id>&fit=1` deep-links.
+- **Editor protocol** (parent ↔ iframe via postMessage, `{ld:true,type:…}`): parent sends `mode|select|deselect|delete|dup|move|style|text|edit|replace|link|drop|dragcancel|dragout-request|play`; shim sends `ready|select|deselect|html|undo|dragstart|dragout|dragback|dragend|navigate`. Manual edits set `spec=null` (screen becomes plain HTML).
+- **Links/flows**: `data-link="<screen title>"` attributes in HTML (spec `link` props render to them). Arrows drawn from them; ▶ Play swaps iframes on `navigate`.
+- **Assets**: `POST /api/assets {project,name,type,data(base64)}` → `~/.localdesign/assets/<project>/…`, served at `/assets/<project>/<file>`; `POST /api/inline` makes HTML self-contained (data URIs). Prompts list assets so the model uses them.
+- **Security**: all requests need a `Host` in `ALLOWED_HOSTS`; mutating requests need a same-origin `Origin`/`Referer` (or none, for curl). Keys stored plaintext in config.json (documented). Audit log `~/.localdesign/audit.jsonl` records every model call.
+
+## Status
+
+Done and verified (browser + tests): generation (both engines), variants/directions, iterate, regenerate, versions, device resize,
+design-system import, data sources, library (components/assets/snippets; drag or click-to-insert), in-screen editor incl. element AI edits and
+cross-frame drag, flows (plan → generate → arrows → player), artifacts, exports (JSON, spec .md, HTML, React jsx+css, AI React+Tailwind, implementation pack).
+
+**Not verified**: a real mouse in Safari/Chrome on the editor and library drag — everything was driven through the postMessage protocol
+and synthetic pointer events. The user reported "can't see how to drag" before the Safari fix + click-to-insert; needs a real check.
+
+**Not done**
+- PyPI publish (name `localdesign` is free; `uv build` works; wheel verified in a clean venv). Tag `v0.3.0` and `uv publish` when the user says go.
+- Firefox untested. Linux/Windows only via CI (tests), not the UI.
+- Pack: no AI-written narrative option (deterministic only); no per-screen screenshots inside the zip (would need headless Chrome).
+- Spec engine: no progressive *section-level* streaming beyond JSON repair; `tabbar` not always emitted by small models on phone layouts.
+- Editor: no redo; resize handles are style-popover only (no drag handles); undo is whole-screen version pop.
+- Library: no search/filter; no user-defined component *categories*; assets limited to images/fonts, 8 MB.
+- Multi-user: single process, single global config; fine for one person or a trusted LAN only.
+
+## Ideas queue (user-approved direction: ship for regulated/offline teams)
+1. Real-mouse QA pass, then PyPI + GitHub release notes + a 20-s GIF for the README.
+2. Pack v2: optional model-written `ARCHITECTURE.md` narrative; per-screen PNGs; a `VERIFY.md` with a checklist an agent can run; export straight into a repo folder via a path picker.
+3. Artifacts v2: multi-file artifacts, "chat with the artifact" log per frame, embed data sources into artifact JS.
+4. Design-system v2: import from a running site URL (fetch CSS), Storybook stories, Figma tokens plugin JSON; component *categories* in the library.
+5. Editor v2: resize handles, redo, multi-select, align/distribute, copy element as spec node (keep spec linkage after manual edits).
+6. Onboarding: first-run wizard (pick endpoint → fetch models → test call), sample project, keyboard-shortcut sheet.
+7. Local-model quality: fine-tune/evaluate spec-engine prompts per model family; cache component thumbnails.
+
+## Memory
+Claude's project memory for this repo lives in `~/.claude/projects/-Users-janelle-Documents-me-design/memory/project-localdesign.md`
+(and `project-localcode.md`). The idea inbox is `~/.claude/projects/-Users-janelle-Documents/memory/ideas_inbox.md`.
