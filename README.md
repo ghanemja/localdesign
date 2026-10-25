@@ -9,6 +9,9 @@ A local, provider-agnostic take on Claude Design. One `pip install`, one command
 [![CI](https://github.com/ghanemja/localdesign/actions/workflows/ci.yml/badge.svg)](https://github.com/ghanemja/localdesign/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![MIT](https://img.shields.io/badge/license-MIT-black)
 
+![20-second demo: a prompt streams three dashboard variants onto the canvas, one is iterated by chat, then exported as an implementation pack](docs/demo.gif)
+*Prompt → three design directions → iterate one by chat → Export ▾ → Implementation pack (with screenshots and a model-written overview).*
+
 ![Three variants of a solar-fleet dashboard, generated from one prompt](docs/variants-solar.png)
 *One prompt → three design directions. "Dashboard for a solar-panel fleet operator: left nav, KPI row, daily output chart, alerts table, site list."*
 
