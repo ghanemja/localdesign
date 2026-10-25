@@ -28,7 +28,7 @@ lde                                                  # → http://127.0.0.1:7878
 | **Artifacts too** | Switch the prompt bar to **Artifact**: working single-file apps, calculators, charts, games, interactive docs — plain JS, no CDN. Same canvas, same editor, same exports. | Mockups only (or artifacts only) |
 | **Flows, not screens** | Paste a journey or a PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play the clickable prototype. | Isolated screens |
 | **Real data** | Paste JSON/CSV → tables and lists use your actual rows. | Lorem ipsum |
-| **Implementation pack** | Export ▾ → a zip of Markdown an engineer *or a small local model* can build from: `ARCHITECTURE.md` (inventory, navigation graph, inferred data model), `DESIGN_SYSTEM.md`, `FLOWS.md`, `DATA.md`, `IMPLEMENTATION_PLAN.md`, `AGENTS.md` (rules for the agent), per-screen docs with props, exact markup and verbatim copy, reference HTML, `tokens.css`, `components.css`, assets. Deterministic, no model call, runs offline. Built for teams (government, healthcare) that can't use frontier tooling. | HTML files |
+| **Implementation pack** | Export ▾ → a zip of Markdown an engineer *or a small local model* can build from: `ARCHITECTURE.md` (inventory, navigation graph, inferred data model), `DESIGN_SYSTEM.md`, `FLOWS.md`, `DATA.md`, `IMPLEMENTATION_PLAN.md`, `AGENTS.md` (rules for the agent), `VERIFY.md` (grep-able checks the agent runs on its own work), per-screen docs with props, exact markup and verbatim copy, reference HTML + PNG, `tokens.css`, `components.css`, assets. Deterministic, offline; optionally a model-written overview. Built for teams (government, healthcare) that can't use frontier tooling. | HTML files |
 | **Round trip** | In: PRD/ticket text. Out: design-spec Markdown, per-screen React (.jsx + .css), AI React + Tailwind, self-contained HTML. | HTML only |
 | **Air-gap ready** | Stdlib Python server + vanilla JS, no CDN in generated output (optional), audit log of every model call, Origin/Host guard, works behind corporate proxies with any OpenAI-compatible endpoint. | Cloud or Electron |
 
@@ -82,7 +82,7 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 - **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page; adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.
-- **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`.
+- **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`; when it says it is done, *"Run design/VERIFY.md and report pass/fail per line."* Options: per-screen PNG screenshots (needs Chrome, Chromium or Edge on the machine — `LD_CHROME=/path/to/chrome` to point at one) and a model-written overview at the top of `ARCHITECTURE.md` (the only part of the pack that calls the model).
 - **Export ▾**: project JSON, design spec (.md), HTML, React (.jsx + .css, deterministic), React + Tailwind (AI), all screens at once.
 - Canvas: drag to pan, ⌘/Ctrl+scroll to zoom, Space+drag, **Fit**, `/` focuses the prompt. Projects autosave to `~/.localdesign/projects/`.
 
@@ -108,7 +108,7 @@ Claude models: reasoning effort defaults to **low** for generation (deep thinkin
 
 ```bash
 pip install -e ".[dev]"
-pytest                      # 113 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
+pytest                      # 129 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
 ```
 
 CI runs the suite on Linux, Windows and macOS × Python 3.10/3.12/3.13 and checks the built wheel ships the static app.
