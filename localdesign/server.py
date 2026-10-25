@@ -133,6 +133,27 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
         audit({**rec, "ok": False, "error": f"{type(e).__name__}: {e}"[:300], "secs": round(time.time() - t0, 1)})
 
 
+def _pack_narrative(cfg: dict, proj: dict) -> tuple[str | None, str | None]:
+    """One blocking model call writing the ARCHITECTURE.md overview. Returns (text, error)."""
+    if not cfg.get("model"):
+        return None, "no model configured"
+    briefs = "\n".join(f"- {s.get('title')}: {(s.get('brief') or '').strip() or '(no brief)'}" for s in proj.get("screens") or [])
+    user = prompts.PACK_NARRATIVE.format(name=proj.get("name") or "Untitled", architecture=pack.architecture_md(proj)[:20000], flows=pack.flows_md(proj)[:8000], briefs=briefs[:6000])
+    sys_p = "You are a staff engineer writing a crisp architecture overview from a design pack. You never invent features that are not in the material."
+    t0 = time.time()
+    rec = {"kind": "export", "mode": "narrative", "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"), "prompt_chars": len(sys_p) + len(user), "user_prompt": user[:300]}
+    try:
+        text = "".join(d for d in llm.stream(cfg, sys_p, [{"role": "user", "content": user}], temperature=0.3) if isinstance(d, str))
+        audit({**rec, "ok": True, "out_chars": len(text), "secs": round(time.time() - t0, 1)})
+        return text.strip() or None, None if text.strip() else "model returned nothing"
+    except llm.Truncated as e:
+        audit({**rec, "ok": True, "truncated": True, "secs": round(time.time() - t0, 1)})
+        return None, str(e)
+    except llm.LLMError as e:
+        audit({**rec, "ok": False, "error": str(e)[:300], "secs": round(time.time() - t0, 1)})
+        return None, str(e)
+
+
 def _spec_partial(text: str, width: int, ds, data) -> str:
     try:
         spec = json.loads(components.repair_json(text))
@@ -271,7 +292,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/config":
             with CFG_LOCK:
                 out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None)
-                return _json(self, out)
+            out["chrome"] = bool(pack.find_chrome())   # pack screenshots possible on this machine
+            return _json(self, out)
         if u.path == "/api/models":
             try:
                 with CFG_LOCK:
@@ -384,11 +406,35 @@ class Handler(BaseHTTPRequestHandler):
                 for f in sorted((config.ASSETS_DIR / pid).iterdir()):
                     if f.is_file() and SAFE_FILE.match(f.name):
                         files.append((f.name, f.read_bytes()))
-            data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files)
+            warnings = []
+            shot_fn = None
+            if body.get("screenshots"):
+                chrome = pack.find_chrome()
+                if not chrome:
+                    warnings.append("no headless browser found (Chrome/Chromium/Edge, or set LD_CHROME) — pack has no PNGs")
+                else:
+                    state = {"failed": 0}
+                    def shot_fn(html, width, _c=chrome, _st=state):   # one failure (e.g. a hung browser) skips the rest instead of stalling the export
+                        if _st["failed"]:
+                            return None
+                        png = pack.screenshot(html, width, chrome=_c)
+                        if not png:
+                            _st["failed"] += 1; warnings.append("screenshots failed (browser did not produce a PNG) — pack has no PNGs")
+                        return png
+            narrative = None
+            if body.get("narrative"):
+                with CFG_LOCK:
+                    cfg = dict(CFG)
+                narrative, err = _pack_narrative(cfg, proj)
+                if err:
+                    warnings.append("narrative skipped: " + err)
+            data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files, screenshot_fn=shot_fn, narrative=narrative)
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{re.sub(r"[^a-zA-Z0-9_-]+", "-", proj.get("name") or "design")}-pack.zip"')
             self.send_header("Content-Length", str(len(data)))
+            if warnings:
+                self.send_header("X-LD-Warning", "; ".join(warnings).encode("ascii", "replace").decode())
             self.end_headers()
             self.wfile.write(data)
             return

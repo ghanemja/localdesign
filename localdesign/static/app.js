@@ -340,11 +340,9 @@
       if (kind === "json") download(`${slug(project.name)}.localdesign.json`, JSON.stringify(project, null, 2), "application/json");
       else if (kind === "pack") {
         if (!project.screens.some(x => x.html)) { toast("Nothing to export yet"); return; }
-        await save();
-        const r = await fetch("/api/export/pack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project }) });
-        if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-        const blob = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${slug(project.name)}-pack.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        toast("Implementation pack exported — drop the folder into your repo and point your agent at ARCHITECTURE.md", 5000);
+        $("#packShots").disabled = !cfg.chrome; if (!cfg.chrome) $("#packShots").checked = false;
+        $("#packShotsNote").textContent = cfg.chrome ? "" : "— no headless Chrome/Chromium/Edge found on this machine (install one, or set LD_CHROME)";
+        $("#packNarrative").disabled = !cfg.model; $("#packMsg").textContent = ""; $("#packDlg").showModal();
       }
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
       else if (kind === "html") download(`${slug(s.title)}.html`, await inlined(s.html), "text/html");
@@ -365,6 +363,24 @@
         } finally { setBusy(false); aborter = null; }
       }
     } catch (err) { toast("Export failed: " + err.message, 5000); }
+  });
+  $("#packCancel").addEventListener("click", () => $("#packDlg").close());
+  $("#packGo").addEventListener("click", async () => {
+    const opts = { screenshots: $("#packShots").checked, narrative: $("#packNarrative").checked };
+    if (opts.narrative && goBtn.disabled) { toast("Wait for the current generation to finish."); return; }
+    const btn = $("#packGo"); btn.disabled = true;
+    $("#packMsg").textContent = opts.narrative ? "Writing the overview with the model, then packing…" : opts.screenshots ? "Rendering screenshots…" : "Packing…";
+    if (opts.narrative) setBusy(true, "Writing ARCHITECTURE.md overview");
+    try {
+      await save();
+      const r = await fetch("/api/export/pack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project, ...opts }) });
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const warn = r.headers.get("X-LD-Warning");
+      const blob = await r.blob(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${slug(project.name)}-pack.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      $("#packDlg").close();
+      toast(warn ? "Pack exported, but: " + warn : "Implementation pack exported — drop the folder into your repo and tell your agent to read AGENTS.md", warn ? 8000 : 5000);
+    } catch (err) { $("#packMsg").textContent = "Export failed: " + err.message; }
+    finally { btn.disabled = false; if (opts.narrative) setBusy(false); }
   });
   window.addEventListener("keydown", e => {
     if (isTyping(e)) { if (e.key === "Escape") e.target.blur(); return; }

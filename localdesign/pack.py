@@ -8,6 +8,8 @@ Produces a zip:
   FLOWS.md                  user journeys from the links
   DATA.md                   data sources: schema + sample rows
   IMPLEMENTATION_PLAN.md    ordered, checkbox tasks for an agent, with copy-paste prompts
+  VERIFY.md                 checks an agent can run against its implementation (grep-able copy, routes, tokens)
+  screens/<slug>.png        optional screenshot of the reference rendering (headless Chrome/Chromium/Edge, if installed)
   screens/<slug>.md         per screen: purpose, layout, content inventory, interactions, acceptance criteria
   screens/<slug>.html       the reference rendering (self-contained)
   assets/…                  uploaded brand assets
@@ -16,7 +18,12 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import zipfile
 from html.parser import HTMLParser
 
@@ -142,17 +149,19 @@ def fonts_of(project: dict) -> list[str]:
     for s in project.get("screens") or []:
         for f in FONT.findall(s.get("html") or ""):
             f = f.strip().strip("'\"")
-            if f and f not in out:
+            if f and not f.startswith("var(") and f not in out:
                 out.append(f)
     return out[:5]
 
 
 # ----------------------------------------------------------------------------- per-screen doc
-def screen_md(s: dict, project: dict, index: int) -> str:
+def screen_md(s: dict, project: dict, index: int, png: bool = False) -> str:
     scan = scan_html(s.get("html") or "")
     spec = s.get("spec")
     kind = "Interactive artifact" if s.get("kind") == "artifact" else "Screen"
     L = [f"# {s.get('title')}", "", f"_{kind} {index} · {s.get('width')}px wide · reference rendering: `screens/{slug(s.get('title'))}.html`_", ""]
+    if png:
+        L += [f"![{s.get('title')} — reference screenshot]({slug(s.get('title'))}.png)", ""]
     if s.get("brief"):
         L += ["## Purpose", "", s["brief"].strip(), ""]
     L += ["## Layout", ""]
@@ -320,13 +329,16 @@ def _guess_type(v) -> str:
     return "string"
 
 
-def architecture_md(project: dict) -> str:
+def architecture_md(project: dict, narrative: str | None = None) -> str:
     screens = project.get("screens") or []
     edges = _graph(project)
     entry = screens[0]["title"] if screens else "—"
     L = [f"# {project.get('name') or 'Untitled'} — architecture", "",
          "This document describes a product designed in localdesign. It is written for an implementing engineer or coding agent.",
          "Read it first, then `IMPLEMENTATION_PLAN.md`, then each `screens/*.md` as you build it. The `.html` files beside them are the visual source of truth.", ""]
+    if narrative and narrative.strip():
+        L += ["## Narrative", "", "_Written by the model from the designs below. Everything after this section is derived deterministically from the screens; where the two disagree, the derived sections and the HTML win._", "",
+              narrative.strip(), ""]
     L += ["## Product overview", ""]
     kinds = {"screen": sum(1 for s in screens if s.get("kind") != "artifact"), "artifact": sum(1 for s in screens if s.get("kind") == "artifact")}
     L += [f"- {kinds['screen']} screens" + (f" and {kinds['artifact']} interactive artifacts" if kinds["artifact"] else "") + f"; entry point: **{entry}**."]
@@ -536,6 +548,7 @@ You are implementing **{project.get('name') or 'this product'}** from the design
 2. Do `IMPLEMENTATION_PLAN.md` sections 0 and 1 (scaffold, tokens, shared components).
 3. Implement screens in the order listed in the plan, one at a time: `screens/{first}.md` first.
 4. After each screen, run its acceptance checklist and report pass/fail per item before moving on.
+5. When all screens exist, run `VERIFY.md` top to bottom and fix every failing line before you report.
 
 ## How to report
 For each task: what you built (files), what you verified, and any **Open questions**. Keep it short.
@@ -559,9 +572,11 @@ Exported from localdesign. {n} screen(s). Everything an engineer or coding agent
 | `DATA.md` | attached data sources: schema and sample rows (`data/*.json` has the full rows) |
 | `AGENTS.md` | rules for the implementing agent (read first if you are an LLM) |
 | `IMPLEMENTATION_PLAN.md` | ordered checklist + prompts to paste into an agent |
+| `VERIFY.md` | checks to run against the implementation: copy present, routes wired, tokens used, no hard-coded colours |
 | `tokens.css`, `components.css` | the design tokens and the component CSS the reference screens use — include as-is |
 | `screens/<name>.md` | one per screen: purpose, layout, content inventory, interactions, acceptance criteria |
 | `screens/<name>.html` | the reference rendering, self-contained — open it in a browser; it is the visual source of truth |
+| `screens/<name>.png` | screenshot of that rendering (present when a headless browser was available at export time) |
 | `assets/` | brand assets used by the screens |
 
 ## Using it with an LLM / coding agent
@@ -569,18 +584,164 @@ Exported from localdesign. {n} screen(s). Everything an engineer or coding agent
 1. Drop this folder into the repo (e.g. `design/`).
 2. Tell the agent: *"Read design/AGENTS.md and follow it."* (It points to everything else in order.)
 3. For a single screen: *"Implement design/screens/<name>.md to match design/screens/<name>.html."*
+4. When it says it is done: *"Run every check in design/VERIFY.md and report pass/fail per line."*
 
 The Markdown is deterministic and derived from the designs; the HTML is what the designer actually saw.
 """
 
 
+# ----------------------------------------------------------------------------- VERIFY.md
+_HEX = r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?\b"
+
+
+def _grep(needle: str) -> str:
+    """A grep -rF command for one literal string, quoted for sh."""
+    return "grep -rqF -- " + _sh(needle) + " src/"
+
+
+def _sh(t: str) -> str:
+    return "'" + t.replace("'", "'\\''") + "'"
+
+
+def verify_md(project: dict) -> str:
+    """Checks an agent (or a human with a terminal) can run against its implementation. Each line is a command whose exit status is the verdict."""
+    screens = project.get("screens") or []
+    tokens = tokens_of(project)
+    L = ["# VERIFY.md — checks to run against the implementation", "",
+         "Run from the repo root. `src/` is where the implementation lives — change the path if yours differs. A line **passes** when the command exits 0.",
+         "Report the result per line (`PASS`/`FAIL` + the line) and fix every FAIL before you call the work done. These checks are mechanical; the visual check at the end still matters most.", "",
+         "## 0. Setup", "",
+         "- [ ] `test -f src/tokens.css || test -f src/styles/tokens.css` — `tokens.css` from the pack is included unchanged",
+         "- [ ] `! grep -rnE " + _sh(_HEX) + " src/ --include='*.css' --include='*.jsx' --include='*.tsx' --include='*.vue' --include='*.svelte' | grep -v tokens.css | grep -q .` — no hard-coded colours outside `tokens.css`",
+         ]
+    for k in list(tokens)[:12]:
+        L.append(f"- [ ] `{_grep(f'var(--{k})')}` — token `--{k}` is referenced (not copied as a literal value)")
+    fonts = fonts_of(project)
+    if fonts:
+        L.append(f"- [ ] `{_grep(fonts[0])}` — primary font family `{fonts[0]}` is used")
+    L.append("- [ ] `! grep -rnE 'https?://(cdn|unpkg|cdnjs|fonts\\.googleapis)' src/ | grep -q .` — no CDN or remote font (must run offline)")
+    L.append("")
+    routes = {s["title"]: "/" + (slug(s["title"]) if i else "") for i, s in enumerate(screens)}   # same convention as ARCHITECTURE.md
+    L += ["## 1. Routes", ""]
+    for s in screens:
+        r = routes[s["title"]]
+        L.append(f"- [ ] `{_grep(r)}` — route for **{s['title']}** exists (`{r}`)" if r != "/" else f"- [ ] the default route `/` renders **{s['title']}**")
+    L.append("")
+    for s in screens:
+        scan = scan_html(s.get("html") or "")
+        name = slug(s.get("title"))
+        L += [f"## {s.get('title')}  (`screens/{name}.md`)", ""]
+        seen = set()
+        strings = [h for _, h in scan["headings"]] + [c for c in scan["copy"] if len(c) >= 4]
+        strings = [t for t in strings if not (t in seen or seen.add(t))][:12]
+        for t in strings:
+            L.append(f"- [ ] `{_grep(t)}` — copy present verbatim: “{t}”")
+        for b in scan["buttons"][:8]:
+            if b["text"]:
+                L.append(f"- [ ] `{_grep(b['text'])}` — action “{b['text']}” exists" + (f" and navigates to **{b['link']}** (`{routes.get(b['link'], '?')}`)" if b.get("link") else ""))
+        for f in scan["fields"][:8]:
+            if f["label"]:
+                L.append(f"- [ ] `{_grep(f['label'])}` — field “{f['label']}” (`{f['type']}`) exists")
+        for t in scan["tables"][:4]:
+            for col in t["columns"][:6]:
+                L.append(f"- [ ] `{_grep(col)}` — table column “{col}”")
+        if s.get("spec"):
+            types = sorted({n.get("type", "?") for n in s["spec"].get("sections") or []})
+            if types:
+                L.append(f"- [ ] components used on this screen exist as reusable units: {', '.join(f'`{t}`' for t in types)} (one file or export per type)")
+        if s.get("kind") == "artifact":
+            L.append("- [ ] the behaviour in the reference `<script>` was ported: exercise it by hand once and describe the result")
+        L.append("")
+    data = project.get("data") or {}
+    if data:
+        L += ["## Data", ""]
+        for k, rows in data.items():
+            cols = list(rows[0].keys()) if isinstance(rows, list) and rows and isinstance(rows[0], dict) else []
+            L.append(f"- [ ] `{_grep(slug(k))}` — fixture `data/{slug(k)}.json` is loaded" + (f"; fields rendered: {', '.join(f'`{c}`' for c in cols[:8])}" if cols else ""))
+            for c in cols[:4]:
+                L.append(f"- [ ] `{_grep(c)}` — field `{c}` is referenced")
+        L.append("")
+    L += ["## Visual (manual, decisive)", ""]
+    for s in screens:
+        name = slug(s.get("title"))
+        L.append(f"- [ ] Open `screens/{name}.html` (or `screens/{name}.png`) beside the running app at {s.get('width')}px: same hierarchy, spacing, colours and copy; nothing missing, nothing invented")
+    L += ["- [ ] Keyboard: every control reachable with Tab; `data-link` targets reachable with Enter", "- [ ] Text contrast ≥ 4.5:1 against its background (spot-check headings, body, muted text)", ""]
+    L += ["## Report format", "", "```", "VERIFY  <n> pass / <m> fail", "FAIL  <section> — <line text>  → <what you changed, or why it cannot pass>", "```", ""]
+    return "\n".join(L)
+
+
+# ----------------------------------------------------------------------------- screenshots (optional; needs a headless browser on this machine)
+_CHROME_NAMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "msedge", "microsoft-edge", "brave-browser"]
+_CHROME_PATHS = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+]
+HEIGHTS = {1280: 900, 768: 1024, 390: 844}
+
+
+def find_chrome() -> str | None:
+    """Path to a Chromium-based browser for `--headless --screenshot`, or None. `LD_CHROME` overrides."""
+    env = os.environ.get("LD_CHROME")
+    if env:
+        return env if os.path.isfile(env) or shutil.which(env) else None
+    for n in _CHROME_NAMES:
+        p = shutil.which(n)
+        if p:
+            return p
+    import glob
+    pw = [os.path.expanduser("~/.cache/ms-playwright"), os.path.expanduser("~/Library/Caches/ms-playwright"), os.path.expanduser("~/AppData/Local/ms-playwright"), "/opt/pw-browsers"]
+    bundled = [f for base in pw for pat in ("chromium_headless_shell-*/*/chrome-headless-shell", "chromium_headless_shell-*/*/chrome-headless-shell.exe", "chromium-*/chrome-*/chrome", "chromium-*/chrome-*/chrome.exe", "chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium")
+               for f in sorted(glob.glob(os.path.join(base, pat)), reverse=True)]
+    for p in _CHROME_PATHS + bundled:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def screenshot(html: str, width: int, chrome: str | None = None, timeout: float = 30.0, height: int | None = None) -> bytes | None:
+    """Render self-contained HTML with a headless Chromium at `width` and return PNG bytes (None if no browser or it failed)."""
+    chrome = chrome or find_chrome()
+    if not chrome or not html:
+        return None
+    width = int(width or 1280)
+    height = height or HEIGHTS.get(width, 900)
+    d = tempfile.mkdtemp(prefix="ldshot-")
+    src, out = os.path.join(d, "screen.html"), os.path.join(d, "screen.png")
+    try:
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        cmd = [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--disable-extensions", "--disable-background-networking",
+               "--disable-dev-shm-usage", "--disable-sync", "--no-default-browser-check", "--mute-audio",
+               f"--user-data-dir={os.path.join(d, 'profile')}", f"--window-size={width},{height}", f"--screenshot={out}",
+               "--virtual-time-budget=3000", "file://" + src.replace(os.sep, "/")]
+        if sys.platform != "win32" and hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd.insert(1, "--no-sandbox")
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+        if os.path.exists(out):
+            with open(out, "rb") as fh:
+                data = fh.read()
+            return data if data[:4] == b"\x89PNG" else None
+        return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ----------------------------------------------------------------------------- zip
-def build_pack(project: dict, inline_assets=None, asset_files=None) -> bytes:
-    """inline_assets: fn(html)->html making asset URLs self-contained; asset_files: list of (name, bytes)."""
+def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_fn=None, narrative: str | None = None) -> bytes:
+    """inline_assets: fn(html)->html making asset URLs self-contained; asset_files: list of (name, bytes);
+    screenshot_fn: fn(html, width)->png bytes|None adds screens/<name>.png; narrative: model-written overview for ARCHITECTURE.md."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.md", readme_md(project))
-        z.writestr("ARCHITECTURE.md", architecture_md(project))
+        z.writestr("ARCHITECTURE.md", architecture_md(project, narrative))
+        z.writestr("VERIFY.md", verify_md(project))
         z.writestr("DESIGN_SYSTEM.md", design_system_md(project))
         z.writestr("FLOWS.md", flows_md(project))
         z.writestr("DATA.md", data_md(project))
@@ -598,9 +759,13 @@ def build_pack(project: dict, inline_assets=None, asset_files=None) -> bytes:
             while name in used:
                 name += f"-{i}"
             used.add(name)
-            z.writestr(f"screens/{name}.md", screen_md(s, project, i))
             html = s.get("html") or ""
-            z.writestr(f"screens/{name}.html", inline_assets(html) if inline_assets else html)
+            html = inline_assets(html) if inline_assets else html
+            png = screenshot_fn(html, s.get("width") or 1280) if (screenshot_fn and html) else None
+            z.writestr(f"screens/{name}.md", screen_md(s, project, i, png=bool(png)))
+            z.writestr(f"screens/{name}.html", html)
+            if png:
+                z.writestr(f"screens/{name}.png", png)
             if s.get("spec"):
                 z.writestr(f"screens/{name}.spec.json", json.dumps(s["spec"], indent=2))
         for k, rows in (project.get("data") or {}).items():

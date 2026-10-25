@@ -251,3 +251,17 @@ def assets_prompt(assets: list | None) -> str:
         dims = f" {a['w']}×{a['h']}" if a.get("w") and a.get("h") else ""
         lines.append(f"- {a.get('name')}: {a.get('url')}{dims}" + (f" — {a['note']}" if a.get("note") else ""))
     return "\n".join(lines)
+
+
+PACK_NARRATIVE = """Write the overview section of an architecture document for the product designed below, for the engineer or coding agent who will build it.
+
+Write 250-450 words of plain Markdown prose (short paragraphs, `###` sub-headings allowed, no code, no tables, no top-level headings). Cover, in this order: what the product is and who uses it; the core loop a user goes through, naming the screens in the order they are visited; what the key data is and where it comes from; the three to five implementation decisions that matter most (shell/navigation, shared components, state, data loading); and open questions or risks you can see in the designs. Ground every claim in the material below — do not invent screens, fields or features that are not there. Output only the prose.
+
+Product: {name}
+
+{architecture}
+
+{flows}
+
+Screen briefs:
+{briefs}"""
