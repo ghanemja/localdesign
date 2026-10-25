@@ -530,7 +530,7 @@ You are implementing **{project.get('name') or 'this product'}** from the design
 ## Ground truth, in priority order
 1. `screens/<name>.html` — what the screen must look like. Open it in a browser. When text and docs disagree, the HTML wins.
 2. `screens/<name>.md` — content, props, interactions, acceptance criteria for that screen.
-3. `DESIGN_SYSTEM.md` + `tokens.css` + `components.css` — colours, type, spacing, component classes.
+3. `DESIGN_SYSTEM.md` + `tokens.css` + `components.css` — colours, type, spacing, component classes. (`DESIGN.md` is the same system in the Stitch DESIGN.md format, if your tooling prefers that.)
 4. `ARCHITECTURE.md`, `FLOWS.md`, `DATA.md` — how screens connect and what data they show.
 
 ## Rules
@@ -548,7 +548,7 @@ You are implementing **{project.get('name') or 'this product'}** from the design
 2. Do `IMPLEMENTATION_PLAN.md` sections 0 and 1 (scaffold, tokens, shared components).
 3. Implement screens in the order listed in the plan, one at a time: `screens/{first}.md` first.
 4. After each screen, run its acceptance checklist and report pass/fail per item before moving on.
-5. When all screens exist, run `VERIFY.md` top to bottom and fix every failing line before you report.
+5. When all screens exist, run `sh verify.sh <your-src-dir>` (it executes every check in `VERIFY.md`) and fix every FAIL before you report.
 
 ## How to report
 For each task: what you built (files), what you verified, and any **Open questions**. Keep it short.
@@ -573,6 +573,8 @@ Exported from localdesign. {n} screen(s). Everything an engineer or coding agent
 | `AGENTS.md` | rules for the implementing agent (read first if you are an LLM) |
 | `IMPLEMENTATION_PLAN.md` | ordered checklist + prompts to paste into an agent |
 | `VERIFY.md` | checks to run against the implementation: copy present, routes wired, tokens used, no hard-coded colours |
+| `verify.sh` | runs every command in `VERIFY.md` and prints the report: `sh design/verify.sh src/` |
+| `DESIGN.md` | the design system in the DESIGN.md format (Google Labs / Stitch), for agents and tools that read that |
 | `tokens.css`, `components.css` | the design tokens and the component CSS the reference screens use — include as-is |
 | `screens/<name>.md` | one per screen: purpose, layout, content inventory, interactions, acceptance criteria |
 | `screens/<name>.html` | the reference rendering, self-contained — open it in a browser; it is the visual source of truth |
@@ -584,7 +586,7 @@ Exported from localdesign. {n} screen(s). Everything an engineer or coding agent
 1. Drop this folder into the repo (e.g. `design/`).
 2. Tell the agent: *"Read design/AGENTS.md and follow it."* (It points to everything else in order.)
 3. For a single screen: *"Implement design/screens/<name>.md to match design/screens/<name>.html."*
-4. When it says it is done: *"Run every check in design/VERIFY.md and report pass/fail per line."*
+4. When it says it is done: *"Run `sh design/verify.sh src/` and fix every FAIL."* (or go through `VERIFY.md` by hand)
 
 The Markdown is deterministic and derived from the designs; the HTML is what the designer actually saw.
 """
@@ -670,6 +672,36 @@ def verify_md(project: dict) -> str:
     return "\n".join(L)
 
 
+VERIFY_SH = r"""#!/bin/sh
+# Runs every check in VERIFY.md (each `command` in a "- [ ] `…`" line) and prints PASS/FAIL per line plus a summary.
+# Usage: sh verify.sh [src-dir]      (default src/; the commands in VERIFY.md say src/, we substitute your path)
+# Exit status: number of failures (0 = all mechanical checks pass). Manual lines (no command) are listed as TODO.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd)
+SRC=${1:-src/}
+case "$SRC" in */) ;; *) SRC="$SRC/";; esac
+pass=0; fail=0; todo=0; section=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    "## "*) section=${line#\#\# }; printf '\n%s\n' "$section" ;;
+    "- [ ] "*)
+      rest=${line#- \[ \] }
+      case "$rest" in
+        \`*)
+          cmd=${rest#\`}; cmd=${cmd%%\`*}
+          desc=${rest#*\` — }; [ "$desc" = "$rest" ] && desc=""
+          cmd=$(printf '%s' "$cmd" | sed "s#src/#$SRC#g")
+          if (cd "$HERE/.." 2>/dev/null || cd "$HERE"; sh -c "$cmd") >/dev/null 2>&1; then pass=$((pass+1)); printf '  PASS  %s\n' "$desc"
+          else fail=$((fail+1)); printf '  FAIL  %s\n        $ %s\n' "$desc" "$cmd"; fi ;;
+        *) todo=$((todo+1)); printf '  TODO  %s\n' "$rest" ;;
+      esac ;;
+  esac
+done < "$HERE/VERIFY.md"
+printf '\nVERIFY  %d pass / %d fail / %d manual\n' "$pass" "$fail" "$todo"
+exit $fail
+"""
+
+
 # ----------------------------------------------------------------------------- screenshots (optional; needs a headless browser on this machine)
 _CHROME_NAMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "msedge", "microsoft-edge", "brave-browser"]
 _CHROME_PATHS = [
@@ -742,6 +774,9 @@ def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_f
         z.writestr("README.md", readme_md(project))
         z.writestr("ARCHITECTURE.md", architecture_md(project, narrative))
         z.writestr("VERIFY.md", verify_md(project))
+        z.writestr("verify.sh", VERIFY_SH)
+        from . import designsystem as DS
+        z.writestr("DESIGN.md", DS.to_design_md(project.get("designSystem"), project))
         z.writestr("DESIGN_SYSTEM.md", design_system_md(project))
         z.writestr("FLOWS.md", flows_md(project))
         z.writestr("DATA.md", data_md(project))

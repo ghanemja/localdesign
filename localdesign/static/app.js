@@ -345,6 +345,7 @@
         $("#packNarrative").disabled = !cfg.model; $("#packMsg").textContent = ""; $("#packDest").value = localStorage.getItem("ld.packDest") || ""; $("#packDlg").showModal();
       }
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
+      else if (kind === "designmd") { const d = await post("/api/export/designmd", { project }); download("DESIGN.md", d.markdown, "text/markdown"); toast("DESIGN.md exported — drop it in a repo for Claude Code, Stitch, Open Design or any agent that reads DESIGN.md", 5000); }
       else if (kind === "html") download(`${slug(s.title)}.html`, await inlined(s.html), "text/html");
       else if (kind === "html-all") { for (const sc of project.screens.filter(x => x.html)) { download(`${slug(sc.title)}.html`, await inlined(sc.html), "text/html"); await new Promise(r => setTimeout(r, 300)); } }
       else if (kind === "react" || kind === "react-all") {
@@ -783,6 +784,7 @@
     const d = await r.json(); if (d.error) { $("#dsMsg").textContent = d.error; return; }
     const cur = dsReadTokens(); dsFillTokens({ ...cur, ...d.tokens }); dsDraft.palette = d.palette || []; dsRenderPalette(dsDraft.palette);
     if (d.css && !$("#dsCss").value) $("#dsCss").value = d.css;
+    if (d.kind === "designmd") { if (d.name && !$("#dsName").value) $("#dsName").value = d.name; if (d.notes && !$("#dsNotes").value) $("#dsNotes").value = d.notes; }
     if (d.kind === "html") { const m = text.match(/<body[^>]*>([\s\S]*)<\/body>/i); if (m && !(dsDraft.components || []).length) { (dsDraft.components ||= []).push({ name: "Reference page", description: "match this markup style", html: m[1].trim().slice(0, 4000) }); dsRenderComps(); } }
     $("#dsMsg").textContent = `${d.kind}: ${Object.keys(d.tokens).length} tokens, ${(d.palette || []).length} colors found — adjust below`;
   });

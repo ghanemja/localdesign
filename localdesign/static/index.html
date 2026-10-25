@@ -40,6 +40,7 @@
         <button data-x="json">Project (.json)</button>
         <button data-x="pack"><b>Implementation pack</b> (.zip of Markdown for a coding agent)</button>
         <button data-x="spec">Design spec (.md)</button>
+        <button data-x="designmd">Design system → DESIGN.md</button>
         <div class="sep"></div>
         <button data-x="html">Selected screen → HTML</button>
         <button data-x="react">Selected screen → React (.jsx + .css)</button>
@@ -171,11 +172,11 @@
   <div class="two">
     <label>Name <input id="dsName" placeholder="Acme UI"></label>
     <label>Import from
-      <select id="dsKind"><option value="auto">auto-detect</option><option value="css">CSS variables (:root)</option><option value="tailwind">tailwind.config.js</option><option value="tokens">Design tokens JSON</option><option value="html">HTML page / component</option></select>
+      <select id="dsKind"><option value="auto">auto-detect</option><option value="css">CSS variables (:root)</option><option value="tailwind">tailwind.config.js</option><option value="tokens">Design tokens JSON</option><option value="html">HTML page / component</option><option value="designmd">DESIGN.md (Stitch format)</option></select>
     </label>
   </div>
   <div class="inline"><input id="dsUrl" placeholder="…or fetch from a running site: http://design.internal/  (page + its same-origin stylesheets)"><button type="button" class="ghost" id="dsFetch">Fetch →</button></div>
-  <label>Paste source <textarea id="dsSource" rows="6" placeholder=":root { --brand: #5b4bff; --bg: #f7f7fb; ... }   or   module.exports = { theme: { extend: { colors: {...} } } }   or   { &quot;color&quot;: { &quot;primary&quot;: { &quot;$value&quot;: &quot;#…&quot; } } }"></textarea></label>
+  <label>Paste source <textarea id="dsSource" rows="6" placeholder="DESIGN.md   or   :root { --brand: #5b4bff; --bg: #f7f7fb; ... }   or   module.exports = { theme: { extend: { colors: {...} } } }   or   { &quot;color&quot;: { &quot;primary&quot;: { &quot;$value&quot;: &quot;#…&quot; } } }"></textarea></label>
   <div class="row"><button type="button" class="ghost" id="dsParse">Parse →</button><span id="dsMsg" class="muted small"></span></div>
   <h3>Tokens</h3>
   <div class="tokens" id="dsTokens">

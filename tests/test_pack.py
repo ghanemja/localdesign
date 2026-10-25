@@ -162,3 +162,30 @@ def test_pack_to_folder(app, tmp_path):
     assert post(app + "/api/export/pack", {"project": PROJ, "dest": "relative/path"})[0] == 400
     f = tmp_path / "afile"; f.write_text("x")
     assert post(app + "/api/export/pack", {"project": PROJ, "dest": str(f)})[0] == 400
+
+
+def test_pack_has_design_md_and_verify_sh():
+    z = zipfile.ZipFile(io.BytesIO(pack.build_pack(PROJ)))
+    assert z.read("DESIGN.md").decode().startswith("---\nversion: alpha") and 'primary: "#5b4bff"' in z.read("DESIGN.md").decode()
+    assert z.read("verify.sh").decode().startswith("#!/bin/sh") and "verify.sh" in z.read("README.md").decode()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="sh script")
+def test_verify_sh_runs_checks(tmp_path):
+    import subprocess
+    z = zipfile.ZipFile(io.BytesIO(pack.build_pack(PROJ)))
+    design = tmp_path / "design"; design.mkdir()
+    for n in ("VERIFY.md", "verify.sh"):
+        (design / n).write_bytes(z.read(n))
+    src = tmp_path / "src"; src.mkdir()
+    (src / "tokens.css").write_text(":root{--primary:#5b4bff}")
+    (src / "app.jsx").write_text("const r=['/recipes','/tip-calc']; var(--primary); 'Choose' 'Compare' 'Continue' 'Plan' 'Price' 'Pick 3' 'Rotates weekly.' 'Email' 'Tacos' 'Back' 'Dish' 'Time' 'Tip' orders order total when")
+    r = subprocess.run(["sh", str(design / "verify.sh"), str(src)], capture_output=True, text=True, cwd=tmp_path)
+    out = r.stdout
+    assert "PASS  copy present verbatim: “Rotates weekly.”" in out and "PASS  route for **Recipes** exists" in out and "TODO  the default route" in out
+    assert "VERIFY " in out and r.returncode == int(out.split("VERIFY")[1].split("/")[1].split()[0])   # exit status = fail count
+    (src / "app.jsx").write_text((src / "app.jsx").read_text() + " color:#ff0000")                   # hard-coded colour → that check fails
+    r2 = subprocess.run(["sh", str(design / "verify.sh"), str(src)], capture_output=True, text=True, cwd=tmp_path)
+    assert "FAIL  no hard-coded colours outside `tokens.css`" in r2.stdout and r2.returncode >= 1
+    # the grep for a token reference must not be fooled by src/ path substitution inside quoted strings
+    assert r.returncode <= 2, out

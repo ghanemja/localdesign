@@ -154,3 +154,10 @@ def test_ds_fetch_from_site(app):
         assert post(app + "/api/ds/fetch", {"url": ""})[0] == 400
     finally:
         srv.shutdown()
+
+
+def test_export_design_md_endpoint(app):
+    from tests.helpers import post
+    st, d = post(app + "/api/export/designmd", {"project": {"name": "Z", "designSystem": {"tokens": {"primary": "#010203"}}}})
+    assert st == 200 and d["markdown"].startswith("---") and 'primary: "#010203"' in d["markdown"] and "## Do's and Don'ts" in d["markdown"]
+    assert post(app + "/api/export/designmd", {"project": 1})[0] == 400

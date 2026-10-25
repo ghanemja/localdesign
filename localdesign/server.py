@@ -534,6 +534,11 @@ class Handler(BaseHTTPRequestHandler):
             if "<" not in html:
                 return _json(self, {"error": "need html"}, 400)
             return _json(self, export.html_to_react(html, title))
+        if u.path == "/api/export/designmd":   # design system → DESIGN.md (Google Labs / Stitch format) for other agents and tools
+            proj = body.get("project")
+            if not isinstance(proj, dict):
+                return _json(self, {"error": "need project"}, 400)
+            return _json(self, {"markdown": designsystem.to_design_md(proj.get("designSystem"), proj)})
         if u.path == "/api/export/spec":
             proj = body.get("project")
             if not isinstance(proj, dict):
