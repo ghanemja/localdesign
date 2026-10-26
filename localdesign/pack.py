@@ -765,10 +765,62 @@ def screenshot(html: str, width: int, chrome: str | None = None, timeout: float 
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ----------------------------------------------------------------------------- UIX Bench (optional scoring of the screens)
+# The standard persona panel (uixbench/v0 presets), inlined so the pack needs no uixbench install to carry the spec.
+UIXBENCH_PANEL = [
+    {"id": "typical", "label": "Typical desktop user", "axes": {}},
+    {"id": "low-vision", "label": "Low vision, zooms to 400%", "axes": {"vision": 0.8}, "viewport": [320, 640]},
+    {"id": "motor", "label": "Limited dexterity, touch", "axes": {"motor": 0.8}, "modality": "touch", "viewport": [390, 844]},
+    {"id": "keyboard", "label": "Keyboard-only user", "axes": {}, "modality": "keyboard"},
+    {"id": "novice", "label": "Novice, low reading level", "axes": {"literacy": 0.8, "attention": 0.6}},
+]
+
+
+def _screen_names(project: dict) -> list[tuple[dict, str]]:
+    """(screen, file stem) pairs, unique, in project order: the names used under screens/."""
+    out, used = [], set()
+    for i, s in enumerate(project.get("screens") or [], 1):
+        name = slug(s.get("title"))
+        while name in used:
+            name += f"-{i}"
+        used.add(name)
+        out.append((s, name))
+    return out
+
+
+def uixbench_spec(project: dict) -> dict | None:
+    """uixbench.json for the pack's screens: one task per flow end (a screen reachable from the first screen with no
+    way onward), the standard persona panel with equal goals. `uixbench score screens/` uses it. None without flows."""
+    named = [(s, n) for s, n in _screen_names(project) if s.get("html") and s.get("kind") != "artifact"]
+    if len(named) < 2:
+        return None
+    by_title = {s["title"].strip().lower(): n for s, n in named}
+    edges = {}
+    for a, b in _graph(project):
+        if a.strip().lower() in by_title and b.strip().lower() in by_title:
+            edges.setdefault(by_title[a.strip().lower()], set()).add(by_title[b.strip().lower()])
+    start = named[0][1]
+    seen, todo = {start}, [start]
+    while todo:
+        for nxt in edges.get(todo.pop(), ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    ends = [n for _, n in named if n in seen and n != start and not (edges.get(n, set()) - {start})]
+    if not ends:
+        return None
+    titles = {n: s["title"] for s, n in named}
+    tasks = [{"id": n, "label": f"Reach {titles[n]}", "start": f"{start}.html", "done": {"screen": f"{n}.html"}} for n in ends]
+    return {"uixbench_version": "uixbench/v0", "name": project.get("name") or "design",
+            "services": [{"id": "flows", "label": "Flows", "tasks": tasks}], "personas": UIXBENCH_PANEL}
+
+
 # ----------------------------------------------------------------------------- zip
-def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_fn=None, narrative: str | None = None) -> bytes:
+def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_fn=None, narrative: str | None = None,
+               uixbench_fn=None) -> bytes:
     """inline_assets: fn(html)->html making asset URLs self-contained; asset_files: list of (name, bytes);
-    screenshot_fn: fn(html, width)->png bytes|None adds screens/<name>.png; narrative: model-written overview for ARCHITECTURE.md."""
+    screenshot_fn: fn(html, width)->png bytes|None adds screens/<name>.png; narrative: model-written overview for ARCHITECTURE.md;
+    uixbench_fn: fn({file: html}, spec)->{file: bytes} adds a UIX Bench report under uixbench/."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.md", readme_md(project))
@@ -788,12 +840,7 @@ def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_f
         ds = project.get("designSystem") or None
         spec_tokens = next((s["spec"].get("tokens") for s in (project.get("screens") or []) if s.get("spec") and s["spec"].get("tokens")), {})
         z.writestr("tokens.css", "/* Design tokens. Edit values here, never in components. */\n" + C2._tokens_css(spec_tokens or {}, ds).replace(";--", ";\n  --").replace("{--", "{\n  --").replace("}", "\n}") + "\n")
-        used = set()
-        for i, s in enumerate(project.get("screens") or [], 1):
-            name = slug(s.get("title"))
-            while name in used:
-                name += f"-{i}"
-            used.add(name)
+        for i, (s, name) in enumerate(_screen_names(project), 1):
             html = s.get("html") or ""
             html = inline_assets(html) if inline_assets else html
             png = screenshot_fn(html, s.get("width") or 1280) if (screenshot_fn and html) else None
@@ -803,6 +850,14 @@ def build_pack(project: dict, inline_assets=None, asset_files=None, screenshot_f
                 z.writestr(f"screens/{name}.png", png)
             if s.get("spec"):
                 z.writestr(f"screens/{name}.spec.json", json.dumps(s["spec"], indent=2))
+        spec = uixbench_spec(project)
+        if spec:
+            z.writestr("screens/uixbench.json", json.dumps(spec, indent=2))
+        if uixbench_fn:
+            screens = {f"{name}.html": (inline_assets(s.get("html") or "") if inline_assets else s.get("html") or "")
+                       for s, name in _screen_names(project) if s.get("html")}
+            for fname, data in (uixbench_fn(screens, spec) or {}).items():
+                z.writestr(f"uixbench/{fname}", data)
         for k, rows in (project.get("data") or {}).items():
             z.writestr(f"data/{slug(k)}.json", json.dumps(rows, indent=2, default=str))
         for fname, data in asset_files or []:

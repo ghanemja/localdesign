@@ -342,6 +342,8 @@
         if (!project.screens.some(x => x.html)) { toast("Nothing to export yet"); return; }
         $("#packShots").disabled = !cfg.chrome; if (!cfg.chrome) $("#packShots").checked = false;
         $("#packShotsNote").textContent = cfg.chrome ? "" : "— no headless Chrome/Chromium/Edge found on this machine (install one, or set LD_CHROME)";
+        $("#packUix").disabled = !cfg.uixbench; if (!cfg.uixbench) $("#packUix").checked = false;
+        $("#packUixNote").textContent = cfg.uixbench ? "(scores every screen per persona: compliance, persona fit, flows)" : "— needs the optional uixbench package (pip install uixbench)";
         $("#packNarrative").disabled = !cfg.model; $("#packMsg").textContent = ""; $("#packDest").value = localStorage.getItem("ld.packDest") || ""; $("#packDlg").showModal();
       }
       else if (kind === "spec") { const d = await post("/api/export/spec", { project }); download(`${slug(project.name)}-design-spec.md`, d.markdown, "text/markdown"); }
@@ -367,10 +369,10 @@
   });
   $("#packCancel").addEventListener("click", () => $("#packDlg").close());
   $("#packGo").addEventListener("click", async () => {
-    const opts = { screenshots: $("#packShots").checked, narrative: $("#packNarrative").checked, dest: $("#packDest").value.trim() || undefined, replace: $("#packReplace").checked || undefined };
+    const opts = { screenshots: $("#packShots").checked, uixbench: $("#packUix").checked || undefined, narrative: $("#packNarrative").checked, dest: $("#packDest").value.trim() || undefined, replace: $("#packReplace").checked || undefined };
     if (opts.narrative && goBtn.disabled) { toast("Wait for the current generation to finish."); return; }
     const btn = $("#packGo"); btn.disabled = true;
-    $("#packMsg").textContent = opts.narrative ? "Writing the overview with the model, then packing…" : opts.screenshots ? "Rendering screenshots…" : "Packing…";
+    $("#packMsg").textContent = opts.narrative ? "Writing the overview with the model, then packing…" : opts.uixbench ? "Scoring screens with UIX Bench…" : opts.screenshots ? "Rendering screenshots…" : "Packing…";
     if (opts.narrative) setBusy(true, "Writing ARCHITECTURE.md overview");
     try {
       await save();

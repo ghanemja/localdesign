@@ -189,3 +189,37 @@ def test_verify_sh_runs_checks(tmp_path):
     assert "FAIL  no hard-coded colours outside `tokens.css`" in r2.stdout and r2.returncode >= 1
     # the grep for a token reference must not be fooled by src/ path substitution inside quoted strings
     assert r.returncode <= 2, out
+
+
+# ----------------------------------------------------------------------------- UIX Bench (optional)
+def test_pack_carries_uixbench_spec_for_flows():
+    z = zipfile.ZipFile(io.BytesIO(pack.build_pack(PROJ)))
+    spec = json.loads(z.read("screens/uixbench.json"))
+    assert spec["uixbench_version"] == "uixbench/v0" and [p["id"] for p in spec["personas"]][:2] == ["typical", "low-vision"]
+    [task] = spec["services"][0]["tasks"]
+    assert task["start"] == "plan-selection.html" and task["done"] == {"screen": "recipes.html"}
+    assert not [n for n in z.namelist() if n.startswith("uixbench/")]          # report only when asked
+    lone = {"name": "x", "screens": [{"title": "Only", "html": "<h1>x</h1>"}]}
+    assert pack.uixbench_spec(lone) is None
+
+
+def test_pack_uixbench_fn_adds_report():
+    seen = {}
+    def fake(screens, spec):
+        seen.update(screens=sorted(screens), spec=spec)
+        return {"UIXBENCH.md": b"# UIX Bench report", "ACR.md": b"# ACR"}
+    z = zipfile.ZipFile(io.BytesIO(pack.build_pack(PROJ, uixbench_fn=fake)))
+    assert z.read("uixbench/UIXBENCH.md") == b"# UIX Bench report" and "uixbench/ACR.md" in z.namelist()
+    assert seen["screens"] == ["plan-selection.html", "recipes.html", "tip-calc.html"] and seen["spec"]["services"]
+
+
+def test_pack_endpoint_uixbench_missing_warns(app, monkeypatch):
+    import urllib.request
+    from localdesign import server
+    monkeypatch.setattr(server, "_uixbench_available", lambda: False)
+    req = urllib.request.Request(app + "/api/export/pack", data=json.dumps({"project": PROJ, "uixbench": True}).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req) as r:
+        assert "uixbench not installed" in r.headers["X-LD-Warning"]
+        assert "screens/uixbench.json" in zipfile.ZipFile(io.BytesIO(r.read())).namelist()
+    assert json.loads(urllib.request.urlopen(app + "/api/config").read())["uixbench"] is False

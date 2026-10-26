@@ -216,6 +216,35 @@ def _test_call(cfg: dict) -> dict:
         return {"error": str(e)}
 
 
+def _uixbench_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("uixbench") is not None
+
+
+def _uixbench_fn(warnings: list):
+    """Optional: score the pack's screens with UIX Bench (pip install uixbench). Returns None (and a warning) when the
+    package or its browser is unavailable; the pack is still built."""
+    if not _uixbench_available():
+        warnings.append("uixbench not installed (pip install uixbench) — pack has no UIX Bench report")
+        return None
+
+    def run(screens: dict, spec: dict | None) -> dict:
+        import tempfile
+        from pathlib import Path
+        try:
+            from uixbench.engine import run as uix_run, write as uix_write
+            with tempfile.TemporaryDirectory() as d:
+                for name, html in screens.items():
+                    (Path(d) / name).write_text(html, encoding="utf-8")
+                rep = uix_run(d, spec_data=spec) if spec else uix_run(d)
+                paths = uix_write(rep, Path(d) / "out")
+                return {p.name: p.read_bytes() for p in paths.values()}
+        except Exception as e:   # missing browser, bad screen: report it, never fail the export
+            warnings.append("UIX Bench report failed: " + str(e).splitlines()[0][:160])
+            return {}
+    return run
+
+
 def _pack_narrative(cfg: dict, proj: dict) -> tuple[str | None, str | None]:
     """One blocking model call writing the ARCHITECTURE.md overview. Returns (text, error)."""
     if not cfg.get("model"):
@@ -376,6 +405,7 @@ class Handler(BaseHTTPRequestHandler):
             with CFG_LOCK:
                 out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None)
             out["chrome"] = bool(pack.find_chrome())   # pack screenshots possible on this machine
+            out["uixbench"] = _uixbench_available()     # pack UIX Bench report possible (optional `uixbench` package)
             return _json(self, out)
         if u.path == "/api/models":
             try:
@@ -511,7 +541,11 @@ class Handler(BaseHTTPRequestHandler):
                 narrative, err = _pack_narrative(cfg, proj)
                 if err:
                     warnings.append("narrative skipped: " + err)
-            data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files, screenshot_fn=shot_fn, narrative=narrative)
+            uix_fn = None
+            if body.get("uixbench"):
+                uix_fn = _uixbench_fn(warnings)
+            data = pack.build_pack(proj, inline_assets=_inline_assets, asset_files=files, screenshot_fn=shot_fn, narrative=narrative,
+                                   uixbench_fn=uix_fn)
             if body.get("dest"):   # write straight into a folder (e.g. <repo>/design) instead of downloading a zip
                 try:
                     dest, n = _write_pack(data, str(body["dest"]), bool(body.get("replace")))
