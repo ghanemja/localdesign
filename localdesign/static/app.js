@@ -908,7 +908,11 @@
     const last = qp.get("project") || localStorage.getItem("ld.last");
     if (!(last && await loadProject(last))) renderAll();
     if (qp.get("fit")) setTimeout(fitAll, 400);
-    if (!cfg.model) { $("#firstRun").classList.remove("hidden"); openSettings(); } else $("#firstRun").classList.add("hidden");
+    const firstRun = () => { $("#firstRun").classList.remove("hidden"); if (!dlg.open) openSettings(); };
+    if (!cfg.model) firstRun();
+    else if (!cfg.saved) {   // defaults only (Ollama): check it answers before the user types a prompt into a dead endpoint
+      fetch("/api/models").then(r => r.json()).then(d => { if (d.error) { firstRun(); $("#modelsMsg").textContent = d.error; } }).catch(() => {});
+    }
     promptEl.focus();
   })();
 })();

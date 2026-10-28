@@ -81,6 +81,7 @@ def apply_preset(cfg: dict, provider: str) -> dict:
 def public(cfg: dict) -> dict:
     """Config safe to send to the browser (key masked)."""
     out = dict(cfg)
+    out["saved"] = CONFIG_PATH.exists() or any(os.environ.get(k) for k in ("LD_PROVIDER", "LD_BASE_URL", "LD_MODEL"))
     k = out.get("api_key") or ""
     out["api_key_set"] = bool(k)
     out["api_key"] = (k[:4] + "…" + k[-3:]) if len(k) > 10 else ("set" if k else "")

@@ -42,7 +42,17 @@ def _post(url, headers, body, timeout=600):
             msg = text[:400]
         raise LLMError(f"HTTP {e.code}: {msg}") from None
     except urllib.error.URLError as e:
-        raise LLMError(f"Cannot reach {url}: {e.reason}") from None
+        raise LLMError(unreachable(url, e.reason)) from None
+
+
+def unreachable(url: str, reason) -> str:
+    """Human message for a refused/unresolvable endpoint, with the likely fix."""
+    msg = f"Cannot reach the model endpoint {url.split('/v1')[0]} ({reason})."
+    if ":11434" in url:
+        return msg + " Is Ollama running? Start it (`ollama serve`) and pull a model (`ollama pull qwen2.5-coder:7b`), or open Settings (top right) to use another endpoint."
+    if ":1234" in url:
+        return msg + " Is LM Studio's local server started? Or open Settings (top right) to use another endpoint."
+    return msg + " Check the base URL in Settings (top right), or that the server is up."
 
 
 def _headers(cfg):
@@ -64,7 +74,7 @@ def list_models(cfg) -> list[str]:
     except urllib.error.HTTPError as e:
         raise LLMError(f"HTTP {e.code} listing models")
     except urllib.error.URLError as e:
-        raise LLMError(f"Cannot reach {base}: {e.reason}")
+        raise LLMError(unreachable(base, e.reason))
     return sorted(m.get("id", "") for m in data.get("data", []))
 
 
