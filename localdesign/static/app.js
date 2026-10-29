@@ -885,6 +885,7 @@
     const t0 = Date.now();
     try {
       const r = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const d = await r.json();
+      $("#modelDot").className = "dot " + (d.ok ? "ok" : "bad");
       $("#modelsMsg").textContent = d.ok ? `✓ ${cfg.model} answered “${d.reply}” in ${d.secs}s · engine auto → ${d.mode}. Save to start.` : "✗ " + d.error;
     } catch (e) { $("#modelsMsg").textContent = "✗ " + e.message + ` (${((Date.now() - t0) / 1000).toFixed(1)}s)`; }
   });
@@ -911,7 +912,7 @@
     const firstRun = () => { $("#firstRun").classList.remove("hidden"); if (!dlg.open) openSettings(); };
     if (!cfg.model) firstRun();
     else if (!cfg.saved) {   // defaults only (Ollama): check it answers before the user types a prompt into a dead endpoint
-      fetch("/api/models").then(r => r.json()).then(d => { if (d.error) { firstRun(); $("#modelsMsg").textContent = d.error; } }).catch(() => {});
+      fetch("/api/models").then(r => r.json()).then(d => { if (d.error) { firstRun(); $("#modelsMsg").textContent = d.error; $("#modelDot").className = "dot bad"; $("#settingsBtn").title = d.error; } }).catch(() => {});
     }
     promptEl.focus();
   })();
