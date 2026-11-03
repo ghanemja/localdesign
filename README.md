@@ -17,6 +17,9 @@ uv tool install localdesign        # or: pipx install localdesign / pip install 
 lde                                # → http://127.0.0.1:7878   (from a checkout: uv tool install --editable .)
 ```
 
+![The localdesign app: three screens of a solar-fleet ops product on the canvas (desktop overview, alerts table, phone field app), the overview selected and a chat edit typed into the prompt bar, running against a local qwen2.5-coder:14b](docs/app.png)
+*The app: screens on an infinite canvas, flow arrows between them, select one and describe a change. Here running on a local 14B model.*
+
 ## Why this exists
 
 The prompt-to-UI tools of 2026 — Claude Design, Google Stitch, and the open-source Open Design — all assume a frontier model or a

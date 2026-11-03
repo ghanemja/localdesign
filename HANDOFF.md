@@ -50,7 +50,7 @@ localdesign/
     editor.js      shim injected into every screen iframe at display time (never saved): hover/select, text edit, style, reorder, drag/drop, serialize
 tests/             pytest; conftest.py has FakeLLM (OpenAI-compatible mock that answers by prompt content) + the app on a free port
 .github/workflows/ci.yml   Linux/Windows/macOS × Python 3.10/3.12/3.13 + wheel check — green
-docs/              README screenshots
+docs/              README screenshots (app.png: spec-rendered project + Playwright, no model needed — see below)
 ```
 
 ### Key mechanics
@@ -119,3 +119,11 @@ The README already says `uv tool install localdesign`; it is wrong until `uv pub
 ## Memory
 Claude's project memory for this repo lives in `~/.claude/projects/-Users-janelle-Documents-me-design/memory/project-localdesign.md`
 (and `project-localcode.md`). The idea inbox is `~/.claude/projects/-Users-janelle-Documents/memory/ideas_inbox.md`.
+
+## docs/app.png (session 3)
+Still screenshot of the app itself, populated. Made without a model: a script writes `$LD_HOME/projects/helios.json` with three
+screens rendered by `components.render(spec, width)` (fleet overview from `EXAMPLE_SPEC` + alerts table + 390-px field app),
+a 20-line stub OpenAI-compatible server answers `/v1/models` so the status dot is green and the first-run dialog stays shut,
+`lde --no-open --provider openai --base-url <stub> -m qwen2.5-coder:14b`, then Playwright at 1600×860, deviceScaleFactor 2,
+`?project=helios&fit=1`, `localStorage['ld.hint.editor']='1'` (suppresses the hint toast), click the first frame's `.title`
+to select it (clicking elsewhere on the title bar starts a drag and does **not** select), fill `#prompt`.
