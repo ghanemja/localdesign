@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Less "generated-looking" output
+- Every generation prompt (HTML, spec, iterate, artifact) now carries craft rules: no purple/blue gradients, gradient text,
+  glows or glassmorphism; one accent colour on neutrals; no emoji icons, card-in-card, three-feature-card rows or
+  badge-on-everything; sentence-case labels; plain specific copy (no "unlock / seamless / elevate", no greetings);
+  realistic uneven numbers and varied names; tabular figures; density that fits the job; real states (empty, error, pagination).
+- Design directions reworded to stop asking for "luminous accents" and strong colour as gradients.
+- Spec renderer: sentence-case stat labels and table headers (no uppercase letter-spacing), weight 600 headings, flat avatars
+  and image placeholders, tabular numbers in stats and tables, chart axes on round steps (0/20/40, not 10.25/20.5).
+  The example spec no longer opens with "Good afternoon, Mara".
+- README: populated screenshot of the app and of the Library panel.
+
 ## 0.3.0 — 2026-10-25
 
 First PyPI release. `pip install localdesign` (or `uv tool install localdesign`), then `lde`.

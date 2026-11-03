@@ -62,8 +62,8 @@ EXAMPLE_SPEC = {
     "layout": "sidebar",
     "nav": {"brand": "Helios", "items": ["Overview", "Sites", "Alerts", "Reports"], "active": "Overview", "user": "Mara Lindqvist"},
     "sections": [
-        {"type": "heading", "text": "Good afternoon, Mara", "sub": "Thursday 12 June · 46 sites reporting", "actions": [{"label": "Export", "primary": False}, {"label": "New site", "primary": True}]},
-        {"type": "stats", "items": [{"label": "Output today", "value": "412.6 MWh", "delta": "+8.4%", "trend": "up"}, {"label": "Active alerts", "value": "7", "delta": "3 critical", "trend": "down"}, {"label": "Sites online", "value": "46 / 48"}]},
+        {"type": "heading", "text": "Fleet overview", "sub": "Thu 12 Jun, 14:42 · 46 of 48 sites reporting", "actions": [{"label": "Export", "primary": False}, {"label": "New site", "primary": True}]},
+        {"type": "stats", "items": [{"label": "Output today", "value": "412.6 MWh", "delta": "+8.4% vs yesterday", "trend": "up"}, {"label": "Active alerts", "value": "7", "delta": "3 critical", "trend": "down"}, {"label": "Sites online", "value": "46 / 48"}]},
         {"type": "split", "ratio": "2:1", "children": [
             {"type": "chart", "kind": "area", "title": "Fleet output (MW)", "labels": ["6a", "9a", "12p", "3p", "6p"], "series": [{"name": "Today", "values": [2, 18, 41, 36, 9]}, {"name": "Yesterday", "values": [3, 15, 38, 33, 8]}]},
             {"type": "list", "title": "Alerts", "items": [{"title": "Inverter 4 offline", "sub": "Ridgecrest", "badge": "critical"}, {"title": "String underperforming", "sub": "Mesa Verde", "badge": "warning"}]}
@@ -96,9 +96,9 @@ a{color:inherit;text-decoration:none}
 .ld-main{padding:var(--pad);display:flex;flex-direction:column;gap:var(--gap);max-width:100%}
 .centered .ld-main{max-width:720px;margin:0 auto;width:100%}
 .mobile .ld-main{padding:16px;padding-bottom:84px;gap:16px}
-.ld-av{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none}
+.ld-av{width:32px;height:32px;border-radius:50%;background:var(--chip);color:var(--text);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none}
 .ld-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
-.ld-head h1{font-size:var(--fs-h1);margin:0;letter-spacing:-.02em;font-weight:700}
+.ld-head h1{font-size:var(--fs-h1);margin:0;letter-spacing:-.01em;font-weight:600}
 .ld-head p{margin:4px 0 0;color:var(--muted)}
 .ld-actions{display:flex;gap:8px;flex-wrap:wrap}
 .ld-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:var(--fs);cursor:pointer;color:var(--text)}
@@ -106,16 +106,16 @@ a{color:inherit;text-decoration:none}
 .ld-btn.sm{padding:6px 10px;font-size:var(--fs-sm)}
 .ld-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--gap)}
 .ld-stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:var(--card-pad)}
-.ld-stat .l{color:var(--muted);font-size:var(--fs-sm);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
-.ld-stat .v{font-size:var(--fs-stat);font-weight:700;letter-spacing:-.02em;margin:6px 0 2px}
+.ld-stat .l{color:var(--muted);font-size:var(--fs-sm);font-weight:500}
+.ld-stat .v{font-size:var(--fs-stat);font-weight:600;letter-spacing:-.01em;margin:6px 0 2px;font-variant-numeric:tabular-nums}
 .ld-stat .d{font-size:var(--fs-sm);font-weight:600}.ld-stat .d.up{color:var(--ok)}.ld-stat .d.down{color:var(--bad)}
 .ld-grid{display:grid;gap:var(--gap)}
 .ld-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:var(--card-pad);display:flex;flex-direction:column;gap:12px}
 .ld-card>h3{margin:0;font-size:var(--fs-h3);font-weight:600}.ld-card .sub{color:var(--muted);margin:-8px 0 0;font-size:var(--fs-sm)}
 .ld-card .body{color:var(--text)}
 .ld-text.sm{font-size:var(--fs-sm)}.ld-text.lg{font-size:var(--fs-lg)}.ld-text.muted{color:var(--muted)}
-table.ld-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
-.ld-table th{text-align:left;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+table.ld-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.ld-table th{text-align:left;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);font-size:var(--fs-sm)}
 .ld-table td{padding:10px;border-bottom:1px solid var(--line)}
 .ld-table tr:last-child td{border-bottom:0}
 .ld-badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--chip);color:var(--text)}
@@ -154,11 +154,10 @@ table.ld-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 .ld-tier li::before{content:"✓";color:var(--ok);margin-right:8px;font-weight:700}
 .ld-hero{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;padding:40px 0}
 .ld-hero.center{grid-template-columns:1fr;text-align:center;max-width:720px;margin:0 auto}
-.ld-hero h1{font-size:var(--fs-hero);line-height:1.08;letter-spacing:-.03em;margin:0 0 16px;font-weight:800}
+.ld-hero h1{font-size:var(--fs-hero);line-height:1.08;letter-spacing:-.03em;margin:0 0 16px;font-weight:700}
 .ld-hero p{font-size:var(--fs-lg);color:var(--muted);margin:0 0 24px}
 .ld-hero .ld-actions{justify-content:inherit}.ld-hero.center .ld-actions{justify-content:center}
-.ld-img{background:linear-gradient(135deg,var(--chip),var(--line));border-radius:var(--r);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:var(--fs-sm);font-weight:500;position:relative;overflow:hidden}
-.ld-img::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.5),transparent 60%)}
+.ld-img{background:var(--chip);border-radius:var(--r);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:var(--fs-sm);font-weight:500;position:relative;overflow:hidden}
 .ld-feat{display:grid;gap:var(--gap)}
 .ld-feat .f{display:flex;flex-direction:column;gap:8px}
 .ld-feat .f .ic{width:40px;height:40px;border-radius:var(--r-sm);background:var(--info-bg);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:18px}
@@ -329,15 +328,21 @@ def _chart_svg(n: dict) -> str:
         return f'<div class="ld-chart" style="display:flex;gap:24px;align-items:center"><svg viewBox="0 0 220 220" style="max-width:220px">{"".join(parts)}<text x="{cx}" y="{cy + 6}" text-anchor="middle" font-size="22" font-weight="700" fill="var(--text)">{e(n.get("center", int(total)))}</text></svg><div class="ld-legend" style="flex-direction:column;gap:8px">{legend}</div></div>'
     allv = [v for s in series for v in _nums(s.get("values"))] or [0, 1]
     lo, hi = min(0.0, min(allv)), max(allv) or 1.0
+    # round axis ticks (0, 10, 20, 30 … not 10.25, 20.5, 30.75)
+    raw = (hi - lo) / 4 or 1.0
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+    lo, hi = math.floor(lo / step) * step, math.ceil(hi / step) * step
+    nticks = max(1, round((hi - lo) / step))
     pad_l, pad_r, pad_t, pad_b = 36, 10, 10, 26
     iw, ih = W - pad_l - pad_r, H - pad_t - pad_b
     npts = max(len(_nums(s.get("values"))) for s in series) if series else 2
     gx = lambda i: pad_l + (i / max(1, npts - 1)) * iw
     gy = lambda v: pad_t + ih - ((v - lo) / (hi - lo or 1)) * ih
     out = []
-    for g in range(5):
-        y = pad_t + ih * g / 4
-        val = hi - (hi - lo) * g / 4
+    for g in range(nticks + 1):
+        y = pad_t + ih * g / nticks
+        val = round(hi - step * g, 6)
         out.append(f'<line x1="{pad_l}" x2="{W - pad_r}" y1="{y:.1f}" y2="{y:.1f}" stroke="var(--line)"/><text x="{pad_l - 6}" y="{y + 4:.1f}" text-anchor="end" font-size="10" fill="var(--muted)">{val:g}</text>')
     if kind == "bar":
         nser = max(1, len(series))

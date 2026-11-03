@@ -64,6 +64,9 @@ Pick Open Design or Dyad if you can run a frontier agent. Pick localdesign if yo
 **Flows.** A one-line checkout description → four planned screens, generated with navigation links, arrows on the canvas, ▶ Play to click through.
 ![Four linked checkout screens with flow arrows](docs/flow.png)
 
+**Component library.** ⊟ Library (top left) opens the palette: built-in components rendered in the current design system, plus your uploaded assets and brand snippets. Drag one onto a screen, or select a screen and click it.
+![Library panel open beside the canvas, showing Heading, Stats, Card, Table, List and chart components](docs/library.png)
+
 **Spec engine.** The model wrote ~1.5 KB of JSON; localdesign rendered it. This is what makes 4–8B local models usable.
 
 <p><img src="docs/spec-desktop.png" width="68%" alt="Spec-engine desktop dashboard"> <img src="docs/spec-phone.png" width="21%" alt="Spec-engine phone screen"></p>
@@ -98,13 +101,14 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 ## Using it
 
 - **Generate**: describe a screen → N variants (each with a different design direction) stream onto the canvas.
-- **Iterate**: click a screen, type a change → new version in place (`v3` badge cycles versions).
+- **Iterate**: click a screen's title, type a change → new version in place (`v3` badge cycles versions).
 - **Edit**: click inside a screen to select an element. Toolbar: text, style, ↑↓ reorder, duplicate, link, **✦ AI** (type a change for that element), delete. Double-click text to edit. Drag an element onto another screen to copy it there. ⌘Z undoes.
 - **Library** (⊟): drag built-in components, your uploaded assets (logo, icons, product shots) or brand snippets onto a screen. Assets live in `~/.localdesign/assets/<project>/` and are served at `/assets/…`; HTML exports inline them.
 - **Artifact** toggle (prompt bar): build an interactive app/tool/chart/game/document instead of a mockup. Iterate, edit and export it like any screen.
 - **Desktop / Tablet / Phone**: sets the width for new screens; with a screen selected it resizes that screen (spec screens re-render in the phone layout; HTML screens reflow — ↻ regenerates at the new width).
 - **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page, a **DESIGN.md**, or **fetch a running site** (page + its same-origin stylesheets → tokens); adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
+- **Craft rules**: every generation prompt carries rules against the generated-UI look (no purple gradients, glows, emoji icons, card-in-card, hype copy, round fake numbers, uppercase micro-labels everywhere) and in favour of what shipped products do (one accent, neutrals, sentence case, tabular numbers, real states). They live in `prompts.CRAFT_RULES` / `SPEC_CRAFT_RULES`; add house rules on top under ◫ Design system → Guidelines.
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.
 - **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`; when it says it is done, *"Run design/VERIFY.md and report pass/fail per line."* Options: per-screen PNG screenshots (needs Chrome, Chromium or Edge on the machine — `LD_CHROME=/path/to/chrome` to point at one), a model-written overview at the top of `ARCHITECTURE.md` (the only part of the pack that calls the model), and writing straight into a folder (e.g. `<repo>/design`) instead of downloading a zip.
 - **Export ▾**: project JSON, design spec (.md), **DESIGN.md**, HTML, React (.jsx + .css, deterministic), React + Tailwind (AI), all screens at once.

@@ -6,7 +6,7 @@ from localdesign import components as C
 def test_example_spec_renders_full_document():
     html = C.render(C.EXAMPLE_SPEC, 1280)
     assert html.startswith("<!DOCTYPE html>") and html.endswith("</html>")
-    assert "Good afternoon, Mara" in html and "412.6 MWh" in html
+    assert "Fleet overview" in html and "412.6 MWh" in html
     assert "<svg" in html                       # chart rendered as inline SVG
     assert "ld-badge" in html                    # badge_col applied
 

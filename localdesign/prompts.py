@@ -6,6 +6,27 @@ import re
 
 from .components import NODE_DOCS, EXAMPLE_SPEC
 
+# Shared craft rules: what makes a screen read as "AI-generated", and what to do instead.
+# Kept brace-free because SYSTEM goes through str.format.
+CRAFT_RULES = """Craft rules — the screen must look like a real team shipped it, not like generated UI:
+- No purple/indigo/violet-to-blue gradients, no gradient text, no glassmorphism, no glows, no decorative blobs or noise. Flat surfaces; at most one subtle gradient on the whole page, and only if the brand calls for it.
+- One accent colour, used sparingly (primary action, active nav item, selected state, one key data series). Everything else is neutrals. Status colours (red/amber/green) only for actual status.
+- Do not wrap every section in an identical rounded, shadowed card. Mix treatments: some content sits directly on the page with a heading and a divider; cards only where grouping helps. Never put cards inside cards. Shadows light or none; radius modest (4–10px) and consistent.
+- No emoji as icons. Use simple, consistent inline SVG line icons (one stroke width, 16–20px) or no icon at all. No ✨, 🚀, 👋. Not every list item or heading needs an icon.
+- No row of three identical icon + title + blurb feature cards; no coloured left-border accent cards; no badges or pills on everything.
+- Labels in sentence case. Avoid tiny uppercase letter-spaced labels except for at most one deliberate eyebrow. No exclamation marks.
+- Copy is plain and specific, the way the product's own team would write it: "Export CSV", "3 invoices overdue", not "Unlock insights", "Seamless", "Elevate", "Supercharge", "Effortlessly". No welcome greetings ("Good morning, Alex 👋") unless the brief asks for one; lead with the page's job.
+- Data looks real: uneven numbers (1,284 not 1,000; 97.3% not 99.9%), plausible dates, varied names (not John Doe / Jane Smith / Acme), a few rows that are empty, long or in an error state. Right-align numeric columns and use tabular figures (font-variant-numeric: tabular-nums).
+- Hierarchy from size, weight and spacing, not colour. Two or three type sizes per screen, weights 400/500/600 (avoid 800–900). Left-align by default; centre only short, standalone content.
+- Density fits the job: operational tools are compact and information-dense; don't pad a dashboard like a landing page. Align everything to one spacing scale (4/8px) and one grid.
+- Include the unglamorous parts real products have: filters, sort, pagination or "Show 20 more", empty and loading states where relevant, secondary actions, timestamps, owners."""
+
+SPEC_CRAFT_RULES = """Craft rules — make it look like a real product, not generated UI:
+- Plain, specific copy ("Export CSV", "3 invoices overdue"). No hype words (unlock, seamless, elevate, supercharge), no exclamation marks, no emoji, no welcome greetings; the heading says what the page is.
+- Realistic, uneven numbers (1,284; 97.3%), varied real-sounding names (not John Doe / Acme), dates and timestamps; include one or two rows in a warning or empty state.
+- Fewer, better sections: no filler feature cards, no badge on every item. Use badges only for real status.
+- One primary action per screen; other actions secondary. Pick a calm primary colour (not purple/indigo by default) and keep density "compact" for data-heavy tools."""
+
 SYSTEM = """You are a senior product designer who designs by writing HTML. You produce finished, high-craft UI screens as a single self-contained HTML document.
 
 Output rules (strict):
@@ -17,15 +38,17 @@ Output rules (strict):
 - Use a coherent design system: a limited palette defined as CSS variables on :root, one or two font stacks (system-ui is fine), consistent spacing scale and radii, clear type hierarchy, generous whitespace.
 - Interactive states are static (no JS needed), but you may add small amounts of inline JS for tabs/toggles if it helps the demo.
 - Accessibility basics: sufficient contrast, semantic elements, labels on inputs.
+
+{craft}
 {direction}"""
 
 DIRECTIONS = [
-    "Design direction for this variant: clean and minimal — lots of whitespace, restrained palette, precise typography.",
-    "Design direction for this variant: bold and expressive — strong color, large type, confident hierarchy.",
-    "Design direction for this variant: warm and friendly — soft shapes, rounded corners, approachable tone.",
-    "Design direction for this variant: dense and data-rich — compact spacing, tables/cards, dashboard feel.",
-    "Design direction for this variant: editorial — magazine-like layout, serif headings, strong grid.",
-    "Design direction for this variant: dark mode — deep background, luminous accents, high contrast.",
+    "Design direction for this variant: clean and minimal — lots of whitespace, a neutral palette with one accent, precise typography, almost no shadows.",
+    "Design direction for this variant: bold — one strong brand colour used in large, confident blocks (not gradients), large type, clear hierarchy.",
+    "Design direction for this variant: warm and friendly — warm neutrals, softer corners, approachable plain-spoken copy; still no emoji or gradients.",
+    "Design direction for this variant: dense and data-rich — compact spacing, tables over cards, tabular numbers, the feel of a tool used eight hours a day.",
+    "Design direction for this variant: editorial — magazine-like layout, serif headings, strong grid, rules and whitespace instead of cards.",
+    "Design direction for this variant: dark mode — near-black neutral background (not navy or purple), restrained accent, high contrast text, no glows.",
 ]
 
 ITERATE = """Here is the current screen HTML:
@@ -36,7 +59,7 @@ ITERATE = """Here is the current screen HTML:
 
 Apply this change: {instruction}
 
-Keep everything else the same (same design system, same content) unless the change requires otherwise. Return the complete updated HTML document only."""
+Keep everything else the same (same design system, same content) unless the change requires otherwise. Do not introduce generated-UI clichés while you are at it: no new gradients, glows, emoji icons, hype copy or extra badges. Return the complete updated HTML document only."""
 
 ELEMENT_ITERATE = """You are editing ONE element inside an existing screen. The page's CSS (variables and relevant rules) is:
 
@@ -58,7 +81,7 @@ CDN_RULE_ALLOWED = ". Exception: you MAY load Tailwind via <script src=\"https:/
 
 
 def system_prompt(width: int, direction: str | None, allow_cdn: bool) -> str:
-    return SYSTEM.format(width=width, direction=direction or "", cdn_rule=CDN_RULE_ALLOWED if allow_cdn else "")
+    return SYSTEM.format(width=width, direction=direction or "", cdn_rule=CDN_RULE_ALLOWED if allow_cdn else "", craft=CRAFT_RULES)
 
 
 def generate_user_prompt(brief: str, context: str | None, verb: str | None = None) -> str:
@@ -112,6 +135,8 @@ Output rules (strict):
 - Use realistic, specific content: real-sounding names, numbers, dates, copy. Never "Lorem ipsum" or placeholder text.
 - Aim for 4-8 sections that together make a complete, believable screen. Use grid/split to put things side by side on wide screens.
 - Viewport is {width}px wide{mobile_hint}.
+
+{craft}
 {direction}
 {nodes}
 
@@ -129,7 +154,7 @@ Return the complete updated spec as one JSON object only. Keep everything else t
 def spec_system_prompt(width: int, direction: str | None) -> str:
     mobile = ", a phone: prefer layout \"mobile\", single-column sections and a tabbar" if width <= 480 else ""
     return (SPEC_SYSTEM.replace("{width}", str(width)).replace("{mobile_hint}", mobile)
-            .replace("{direction}", direction or "").replace("{nodes}", NODE_DOCS)
+            .replace("{craft}", SPEC_CRAFT_RULES).replace("{direction}", direction or "").replace("{nodes}", NODE_DOCS)
             .replace("{example}", json.dumps(EXAMPLE_SPEC, separators=(",", ":"))))
 
 
@@ -235,6 +260,7 @@ Output rules (strict):
 - It must actually work: wire up all interactions in plain JavaScript (no frameworks), handle edge cases, no console errors. Use <canvas> or inline SVG for graphics. State lives in JS variables; persist to localStorage only if useful.
 - Make it feel finished: clear layout for a {width}px-wide viewport, sensible defaults and sample data so it is useful immediately, keyboard support where natural, responsive enough to not break when narrower.
 - Keep it reasonably compact; prefer clarity over cleverness. No comments longer than a line.
+- Visual style: flat surfaces, one accent colour, neutral greys, sentence-case labels, plain copy. No purple-to-blue gradients, gradient text, glows, glassmorphism or emoji icons.
 """
 
 
