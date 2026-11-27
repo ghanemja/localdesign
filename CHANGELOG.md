@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Code context: attach your existing source, reference files with @
+📎 **Code** in the prompt bar (or drop a folder anywhere on the window) attaches a source folder. Type `@` in the prompt
+for completion over its files and folders: `@src/pages/Settings.tsx`, `@Button`, `@src/components/`. Mentioned files, plus
+**pinned** ones (style files such as `tailwind.config.*`, theme/tokens and a global stylesheet with variables are pinned on
+attach), go into the prompt with a compact list of file names, for new screens, iterations, element edits, flow plans and flows.
+The amount per prompt is capped by model size (Settings → *Attached code per prompt*). The status line says how many files were
+sent; unknown `@names` and files that did not fit are reported. The audit log records `code_files` per call. Only text sources
+are read; `node_modules`, build output, lockfiles, binaries, `.env` and key files are skipped. Stored in `~/.localdesign/code/`.
+
+### Fixed
+- While waiting for the model, a new screen showed the red *"No result saved (page was closed mid-generation?)"* error over the
+  frame instead of a loading state. Frames now show a progress card: *Waiting for &lt;model&gt;… 12s* → *Model is thinking…* →
+  *Writing… 4 KB* (docked while the preview streams in), *Queued* for later screens of a flow. It stays readable when zoomed out.
+- Clicking the empty part of a screen's title bar now selects it (it only started a drag).
+- The prompt bar's status moved to its own line, so it no longer squeezes the controls while generating.
+
 ## 0.3.0 — 2026-10-25
 
 First PyPI release. `pip install localdesign` (or `uv tool install localdesign`), then `lde`.

@@ -199,6 +199,9 @@ FLOW_CONTEXT = """This screen is part of a flow with these screens: {titles}.
 Navigation: elements that lead to another screen must carry data-link="<exact screen title>" (buttons, nav items, cards, list rows). This screen should link to: {links}."""
 
 
+CODE_CONTEXT = """Reference material — the user's existing codebase "{name}" ({count} files). The result must fit into this product: reuse its screen and component names, navigation, copy and terminology, data fields, and its visual language (colours, fonts, spacing and radii from its theme/CSS files). Do not invent features it does not have unless the request asks for them. Files the request mentions as @path are included below. This is context only: still answer in exactly the output format required (not source code in the codebase's language, unless that format is what is asked for)."""
+
+
 def plan_user_prompt(text: str) -> str:
     return "Plan the screens for this:\n\n" + text.strip()[:12000]
 

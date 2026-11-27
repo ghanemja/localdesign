@@ -85,10 +85,17 @@
 </main>
 
 <form id="promptBar" autocomplete="off">
-  <div id="targetChip" class="chip hidden"><span id="targetKind">Editing</span> <b id="targetName"></b> <button type="button" id="clearTarget" title="Deselect (Esc)">×</button></div>
+  <div class="chips">
+    <div id="targetChip" class="chip hidden"><span id="targetKind">Editing</span> <b id="targetName"></b> <button type="button" id="clearTarget" title="Deselect (Esc)">×</button></div>
+    <div id="codeChip" class="chip code hidden" title="Attached code — click to see files and pin the ones every prompt should include"><span>📁</span> <b id="codeName"></b> <span id="codeMeta"></span> <button type="button" id="codeDetach" title="Detach this code folder">×</button></div>
+  </div>
+  <div id="mentionPop" class="mention hidden" role="listbox"></div>
   <textarea id="prompt" rows="1" placeholder="Describe a screen to design…"></textarea>
+  <div id="status" class="muted" aria-live="polite"></div>
   <div class="row">
-    <span id="status" class="muted"></span>
+    <button type="button" class="ghost attach" id="attachBtn" title="Attach a code folder so prompts can reference your existing files with @ (or drop a folder anywhere)">📎 Code</button>
+    <input type="file" id="codeFolder" webkitdirectory directory multiple hidden>
+    <input type="file" id="codeFiles" multiple hidden>
     <label class="muted">variants
       <select id="variants"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>6</option></select>
     </label>
@@ -128,6 +135,7 @@
       <label>Temperature <input name="temperature" type="number" step="0.1" min="0" max="2"></label>
       <label>Max tokens <input name="max_tokens" type="number" step="512" min="1024"></label>
     </div>
+    <label>Attached code per prompt, KB <span class="muted small">(0 = auto: <span id="codeBudgetAuto">…</span> for this model — raise it if your local model has a bigger context window)</span><input name="code_budget" type="number" step="1" min="0" placeholder="0"></label>
     <label class="check"><input name="allow_cdn" type="checkbox"> Allow generated screens to load Tailwind / Google Fonts from the internet (off = fully offline)</label>
     <p class="muted small">Env overrides for internal endpoints: <code>LD_BASE_URL</code>, <code>LD_MODEL</code>, <code>LD_API_KEY</code>. Config saved to <code>~/.localdesign/config.json</code>.</p>
     <menu>
@@ -199,6 +207,23 @@
     <button type="button" id="dsSave">Save &amp; re-render spec screens</button>
   </menu>
 </dialog>
+
+<!-- Code context -->
+<dialog id="codeDlg" class="wide">
+  <h2>Code context <span class="muted small">— your existing source, for prompts to reference</span></h2>
+  <p id="codeSummary" class="small"></p>
+  <p class="muted small">Type <code>@</code> in the prompt to reference a file or folder — <code>@src/pages/Settings.tsx</code>, <code>@Button</code>, <code>@src/components/</code>. <b>Pinned</b> files go into every prompt (style files are pinned for you). Only referenced and pinned files, plus the list of file names, are sent to the model — at most <span id="codeBudget"></span> per prompt (Settings). <code>.env</code>, keys, lockfiles, <code>node_modules</code> and build output are never read.</p>
+  <input id="codeFilter" class="filter" placeholder="Filter files…">
+  <ul id="codeList" class="plain codelist"></ul>
+  <menu>
+    <button type="button" class="ghost" id="codeRemove">Detach</button>
+    <button type="button" class="ghost" id="codeReplace">Replace folder…</button>
+    <button type="button" class="ghost" id="codeAddFiles">Add files…</button>
+    <span class="grow"></span>
+    <button type="button" id="codeDone">Done</button>
+  </menu>
+</dialog>
+<div id="dropHint" class="drophint hidden"><div>Drop a code folder to use it as context<br><span class="muted small">prompts can then reference its files with @</span></div></div>
 
 <!-- Data sources -->
 <dialog id="dataDlg" class="wide">
@@ -294,6 +319,7 @@
     <div class="body">
       <iframe sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer"></iframe>
       <div class="shimmer"></div>
+      <div class="wait" aria-live="polite"><span class="spin"></span><span class="wlbl">Waiting for the model…</span></div>
       <div class="err hidden"></div>
     </div>
   </div>

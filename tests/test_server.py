@@ -161,3 +161,84 @@ def test_export_design_md_endpoint(app):
     st, d = post(app + "/api/export/designmd", {"project": {"name": "Z", "designSystem": {"tokens": {"primary": "#010203"}}}})
     assert st == 200 and d["markdown"].startswith("---") and 'primary: "#010203"' in d["markdown"] and "## Do's and Don'ts" in d["markdown"]
     assert post(app + "/api/export/designmd", {"project": 1})[0] == 400
+
+
+# ----------------------------------------------------------------------------- attached code folder
+def _code_project(app):
+    from tests.helpers import post
+    st, d = post(app + "/api/code", {"project": "codeproj1", "name": "clinic", "files": [
+        {"path": "src/pages/Settings.tsx", "content": "export default function Settings(){ return <h1>Northside Family Practice</h1> }"},
+        {"path": "src/pages/Schedule.tsx", "content": "export default () => 'Amara Lewis'"},
+        {"path": "tailwind.config.js", "content": "module.exports = { theme: { colors: { brand: '#0f766e' } } }"},
+        {"path": ".env", "content": "DATABASE_PASSWORD=hunter2"}]})
+    assert st == 200, d
+    return d
+
+
+def test_code_upload_index_and_guards(app):
+    from tests.helpers import post
+    d = _code_project(app)
+    assert d["name"] == "clinic" and [f["path"] for f in d["files"]] == ["src/pages/Schedule.tsx", "src/pages/Settings.tsx", "tailwind.config.js"]
+    assert d["skipped"] == 1 and d["style"] == ["tailwind.config.js"]
+    assert post(app + "/api/code", {"project": "../x", "files": []})[0] == 400
+    assert post(app + "/api/code", {"project": "codeproj2", "files": [{"path": "a.png", "content": "x"}]})[0] == 400
+    assert post(app + "/api/code", {"project": "codeproj1", "files": []}, {"Origin": "https://evil.com"})[0] == 403
+
+
+def test_generate_with_code_mentions_sends_only_referenced_and_pinned_files(app):
+    import json as _json
+    from tests.conftest import FakeLLM
+    from localdesign import config
+    _code_project(app)
+    n = len(FakeLLM.calls)
+    evs = sse_events(app + "/api/generate", {"brief": "Redo @Settings.tsx with a danger zone, like @Missing.tsx", "variants": 1, "mode": "html",
+                                              "code": {"project": "codeproj1", "pins": ["tailwind.config.js"]}})
+    ctx = [e for e in evs if e["type"] == "context"]
+    assert evs[0]["type"] == "context" and len(ctx) == 1
+    assert [f["path"] for f in ctx[0]["files"]] == ["src/pages/Settings.tsx", "tailwind.config.js"] and ctx[0]["unresolved"] == ["Missing.tsx"]
+    assert [e for e in evs if e["type"] == "done"][0]["mode"] == "html"
+    user = FakeLLM.calls[n]["messages"][-1]["content"]
+    assert "Northside Family Practice" in user and "#0f766e" in user and "Amara Lewis" not in user and "hunter2" not in user
+    assert user.index("Reference material") < user.index("Design this screen:") and "src/pages/: Schedule.tsx, Settings.tsx" in user
+    rec = _json.loads(config.AUDIT_PATH.read_text().strip().splitlines()[-1])
+    assert rec["code"] == "clinic" and rec["code_files"] == ["src/pages/Settings.tsx", "tailwind.config.js"] and rec["user_prompt"].startswith("Design this screen:")
+
+
+def test_iterate_element_and_plan_take_code_context(app):
+    from tests.conftest import FakeLLM
+    from tests.helpers import post
+    _code_project(app)
+    code = {"project": "codeproj1", "pins": []}
+    evs = sse_events(app + "/api/iterate", {"html": "<html></html>", "instruction": "use the copy from @src/pages/Schedule.tsx", "code": code})
+    assert evs[0]["type"] == "context" and evs[0]["files"][0]["path"] == "src/pages/Schedule.tsx"
+    assert "Amara Lewis" in FakeLLM.calls[-1]["messages"][-1]["content"]
+    evs = sse_events(app + "/api/iterate-element", {"html": "<h1>Old</h1>", "instruction": "match @Settings", "code": code})
+    assert evs[0]["type"] == "context" and [e for e in evs if e["type"] == "done"][0]["html"] == '<h1 class="x">Changed</h1>'
+    st, d = post(app + "/api/plan", {"text": "screens for @src/pages/", "code": code})
+    assert st == 200 and len(d["context"]["files"]) == 2 and d["screens"]
+    evs = sse_events(app + "/api/generate", {"brief": "x", "variants": 1, "mode": "html", "code": {"project": "nosuchproj", "pins": []}})
+    assert not any(e["type"] == "context" for e in evs)           # no attached code → prompt unchanged
+
+
+def test_code_budget_by_model_and_override(app):
+    from localdesign import server
+    assert server.code_budget({"provider": "ollama", "model": "qwen2.5-coder:7b"}) == 6000
+    assert server.code_budget({"provider": "ollama", "model": "llama3.3:70b"}) == 32000
+    assert server.code_budget({"provider": "anthropic", "model": "claude-opus-5"}) == 120000
+    assert server.code_budget({"provider": "ollama", "model": "x", "code_budget": 20000}) == 20000
+    s, c = get(app + "/api/config")
+    c = json.loads(c)
+    assert c["code_budget_resolved"] == c["code_budget_auto"] == 6000          # custom provider, small model
+
+
+def test_delete_code_and_project_removes_store(app):
+    import urllib.request
+    from localdesign import codebase
+    from tests.helpers import post
+    _code_project(app)
+    assert urllib.request.urlopen(urllib.request.Request(app + "/api/code/codeproj1", method="DELETE")).status == 200
+    assert codebase.load("codeproj1") is None
+    st, d = post(app + "/api/projects", {"name": "with code", "screens": []})
+    post(app + "/api/code", {"project": d["id"], "files": [{"path": "a.ts", "content": "x"}]})
+    urllib.request.urlopen(urllib.request.Request(app + f"/api/projects/{d['id']}", method="DELETE"))
+    assert codebase.load(d["id"]) is None

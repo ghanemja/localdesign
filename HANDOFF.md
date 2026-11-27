@@ -1,6 +1,6 @@
 # HANDOFF.md — state of localdesign for the next session
 
-_Last updated 2026-10-25 (session 2, part 2). Repo: https://github.com/ghanemja/localdesign, branch `main`, CI green at `e556341`+. Everything below is pushed to `main`._
+_Last updated 2026-11-27 (session 3: loading-state fix + code context). Repo: https://github.com/ghanemja/localdesign, branch `main`, CI green at `e556341`+. Everything below is pushed to `main`._
 
 ## What this is
 
@@ -18,7 +18,7 @@ Sibling project: `../localcode` — a zero-dep Claude Code clone (`lc`). Built f
 cd localdesign
 uv tool install --editable . --force      # installs `lde` (editable: code changes apply on restart; static files apply on reload)
 lde                                        # http://127.0.0.1:7878  (config in ~/.localdesign/config.json)
-uv run --with pytest pytest                # 139 tests, ~2 s, no API key needed (mock model server in tests/conftest.py)
+uv run --with pytest pytest                # 169 tests, ~2 s, no API key needed (mock model server in tests/conftest.py)
 ```
 
 Useful flags: `--port`, `--no-open`, `--provider ollama -m qwen2.5-coder:14b`, `--base-url … --api-key …`, `--no-audit`, `--host 0.0.0.0 --allow-host <name>`.
@@ -37,12 +37,13 @@ inside its virtual time budget — screenshot the screen HTML files directly and
 localdesign/
   server.py        ThreadingHTTPServer. Static app, SSE generation, projects, config, assets, exports, Origin/Host guard, audit log
   llm.py           urllib streaming: OpenAI-compatible + Anthropic Messages API; thinking status events; Truncated on max_tokens/length
-  prompts.py       html / spec / artifact / element / plan / export prompts; design-system, data and asset context blocks
+  prompts.py       html / spec / artifact / element / plan / export prompts; design-system, data, asset and code context blocks
+  codebase.py      attached code folders: keep() filter (no node_modules/build/lockfiles/binaries/.env/keys), store per project, @mention resolution, context(store, text, pins, budget)
   components.py    spec engine: JSON layout → HTML via a 30-node component library; BASE_CSS; JSON repair; SAMPLES + library()
   designsystem.py  CSS vars / tailwind.config.js / tokens JSON / HTML → tokens (+ palette, raw CSS)
   export.py        HTML → React (.jsx + .css) deterministic; project → design-spec Markdown
   pack.py          implementation pack (zip or folder): ARCHITECTURE(+narrative)/DESIGN_SYSTEM/FLOWS/DATA/PLAN/AGENTS/VERIFY + per-screen docs + HTML + PNG + css + assets; find_chrome/screenshot
-  config.py        presets, ~/.localdesign/config.json, LD_* env, paths (projects/, assets/, audit.jsonl)
+  config.py        presets, ~/.localdesign/config.json, LD_* env, paths (projects/, assets/, code/, audit.jsonl)
   static/
     index.html     app shell: topbar, library panel, canvas, prompt bar, dialogs (settings, projects, design system, data, flow, pack options), player
     app.css
@@ -59,6 +60,8 @@ docs/              README screenshots
 - **Project JSON** (`~/.localdesign/projects/<id>.json`): `{id, name, device, camera, designSystem, data, assets, screens:[{id,title,brief,x,y,width,kind,html,versions[],spec,specVersions[]}]}`. Autosaved by the client (debounced POST `/api/projects`). `?project=<id>&fit=1` deep-links.
 - **Editor protocol** (parent ↔ iframe via postMessage, `{ld:true,type:…}`): parent sends `mode|select|deselect|delete|dup|move|style|text|edit|replace|link|drop|dragcancel|dragout-request|play`; shim sends `ready|select|deselect|html|undo|dragstart|dragout|dragback|dragend|navigate`. Manual edits set `spec=null` (screen becomes plain HTML).
 - **Links/flows**: `data-link="<screen title>"` attributes in HTML (spec `link` props render to them). Arrows drawn from them; ▶ Play swaps iframes on `navigate`.
+- **Code context**: 📎 / folder drop → client filters + reads text files → `POST /api/code {project, name, files:[{path,content}], add?}` → `~/.localdesign/code/<pid>.json` (8 MB / 5000 files / 256 KB per file caps); returns the index + `style` (auto-pin suggestions). Project JSON keeps only `code: {name, files:[{path,size}], bytes, pinned}`. Generation requests carry `code: {project, pins, text?}`; the server resolves `@mentions` in brief/instruction (+ `text`, the flow description), prepends `prompts.CODE_CONTEXT` + folder-grouped file list + mentioned-then-pinned files within `server.code_budget(cfg)` (6k chars small local / 32k 30B+ local / 120k hosted / `code_budget` setting), emits SSE `{type:"context", files, omitted, unresolved, chars, budget}` first, and audit-logs `code`, `code_files`, `code_chars`. `DELETE /api/code/<pid>`; deleting a project deletes its code. Client: `@` completion (`mentionAt/mentionItems/pickMention`, folders drill down), 📁 chip + Code dialog (pins, filter).
+- **Loading state**: `busyIds` (app.js) is the source of truth for in-flight screens; `renderFrame` toggles `.loading` from it and only marks empty, *non-busy* screens as "No result saved". `setLoading(s, on)` clears stale errors; the `.wait` card (spinner + label from `waitLabel`) is centred until the first partial, then docked (`.streaming`); `.queued` for later flow screens; size counter-scales with `--z` (canvas zoom).
 - **Assets**: `POST /api/assets {project,name,type,data(base64)}` → `~/.localdesign/assets/<project>/…`, served at `/assets/<project>/<file>`; `POST /api/inline` makes HTML self-contained (data URIs). Prompts list assets so the model uses them.
 - **Security**: all requests need a `Host` in `ALLOWED_HOSTS`; mutating requests need a same-origin `Origin`/`Referer` (or none, for curl). Keys stored plaintext in config.json (documented). Audit log `~/.localdesign/audit.jsonl` records every model call (kinds: generate, artifact, iterate, element, plan, export, test).
 - **Pack v2** (`POST /api/export/pack {project, screenshots?, narrative?, dest?, replace?}`): zip download, or JSON `{dest, files, warning}` when `dest` is an absolute folder (refuses non-empty unless `replace`; never deletes). `screenshots` runs `pack.screenshot` = `chrome --headless=new --screenshot --window-size=W,H --virtual-time-budget=3000 file://…` per screen (browser from `LD_CHROME`, PATH names, macOS/Windows app paths, Playwright bundles incl. `chrome-headless-shell`); one failure skips the rest. `narrative` = one blocking model call (`prompts.PACK_NARRATIVE`, temp 0.3) inserted as `## Narrative` under the ARCHITECTURE.md H1. Problems honouring an option go in the `X-LD-Warning` response header; the client toasts them. `GET /api/config` has `chrome: bool`.
@@ -106,6 +109,13 @@ The README already says `uv tool install localdesign`; it is wrong until `uv pub
 - DESIGN.md (Google Labs / Stitch spec, alpha: YAML front matter `colors/typography/rounded/spacing/components`, `{token}` refs, fixed `##` sections Overview, Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's and Don'ts). `designsystem.yaml_subset` is a 60-line stdlib YAML-subset parser (maps, scalars, inline/block lists) — enough for front matter, not general YAML. Import via the DS dialog (auto-detected) or `/api/ds/parse kind=designmd`; export via Export ▾ → DESIGN.md (`/api/export/designmd`) and inside every pack.
 - Pack ships `verify.sh`: parses VERIFY.md's "- [ ] `cmd` — desc" lines, substitutes the src dir, prints PASS/FAIL/TODO, exits with the fail count. Tested end-to-end with a fake src tree.
 - Not done from the "do all of this" list: the small-model proof recording (needs Ollama + a Mac; recipe in the GIF notes above — swap `demo_llm.py` for the real `lde --provider ollama -m gemma3:4b`), and the release steps above.
+
+## Session 3 (2026-11-27)
+- **Bug fixed**: during generation every new frame showed the red "No result saved (page was closed mid-generation?)" box and no progress — `generate()`/flow called `renderAll()` before adding `.loading`, so `renderFrame` took the empty screen for a dead one; the `.err` overlay (inset 0, opaque) then covered shimmer and streaming preview until `done`. Fixed via `busyIds` + a real progress card (see Key mechanics).
+- **Code context** (see Key mechanics). Verified end-to-end in headless Chromium with Playwright: folder picker (webkitdirectory), loose-file drop, @ completion incl. folder drill-down and Enter/Tab/Esc, prompt contents (mentioned + pinned files in, unreferenced/.env/node_modules/dist/lockfile out), status note, unknown-@ warning, dialog pins/filter, reload persistence, detach; and loading states for variants, iterate, model error, regenerate, Stop, queued flow screens, reload mid-generation, phone width.
+- Also: clicking the empty part of a frame's title bar now selects it (the drag handler's `stopPropagation` swallowed the select); prompt-bar status moved to its own line.
+- **Not verified**: a real (non-synthetic) folder drag from Finder — the drop path walks `webkitGetAsEntry()` directories, which Playwright cannot synthesise; the picker path is verified. Firefox/Safari not run.
+- Ideas: "import design system from attached code" (feed the pinned style files to `designsystem.parse`); pass code context to *React + Tailwind (AI)* export so it imports the user's real components; include referenced files in the implementation pack.
 
 ## Ideas queue (user-approved direction: ship for regulated/offline teams)
 1. Real-mouse QA pass (editor, library drag, the three new dialogs), then the release checklist above.

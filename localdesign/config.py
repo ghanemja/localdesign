@@ -10,6 +10,7 @@ CONFIG_PATH = HOME / "config.json"
 PROJECTS_DIR = HOME / "projects"
 AUDIT_PATH = HOME / "audit.jsonl"
 ASSETS_DIR = HOME / "assets"
+CODE_DIR = HOME / "code"          # attached code folders, one JSON per project
 
 PRESETS: dict[str, dict] = {
     "ollama":     {"api": "openai", "base_url": "http://localhost:11434/v1", "api_key": "ollama", "model": "qwen2.5-coder:7b"},
@@ -36,6 +37,7 @@ DEFAULTS = {
     "effort": "low",          # Anthropic output_config.effort: low | medium | high
     "audit": True,            # append every model call to ~/.localdesign/audit.jsonl
     "mode": "auto",           # generation engine: auto | html | spec (spec = JSON layout rendered locally; best for small models)
+    "code_budget": 0,         # max chars of attached code per prompt; 0 = auto (by model size)
 }
 
 

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, components, config, designsystem, export, llm, pack, prompts
+from . import __version__, codebase, components, config, designsystem, export, llm, pack, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -71,7 +71,39 @@ def resolve_mode(cfg: dict, requested: str | None) -> str:
     return "html"
 
 
-def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None, assets=None, kind="screen"):
+def code_budget(cfg: dict) -> int:
+    """Max chars of attached code per prompt. Small local models get little (Ollama's default context is ~4k tokens)."""
+    try:
+        if int(cfg.get("code_budget") or 0) > 0:
+            return max(1000, int(cfg["code_budget"]))
+    except (TypeError, ValueError):
+        pass
+    if cfg.get("provider") in LOCAL_PROVIDERS:
+        return 32_000 if _BIG.search(cfg.get("model") or "") else 6_000
+    return 120_000
+
+
+def _code_ctx(cfg: dict, body: dict, text: str) -> tuple[str, dict | None]:
+    """Prompt block for the project's attached code folder: files @mentioned in `text` + pinned files, within budget."""
+    c = body.get("code")
+    if not isinstance(c, dict):
+        return "", None
+    pid = str(c.get("project") or "")
+    store = codebase.load(pid) if SAFE_ID.match(pid) else None
+    if not store:
+        return "", None
+    pins = [p for p in (c.get("pins") or []) if isinstance(p, str)][:200]
+    return codebase.context(store, f"{text}\n{c.get('text') or ''}", pins, code_budget(cfg))
+
+
+def _code_audit(user: str, info: dict | None) -> dict | None:
+    """Audit fields for a call that carried code: which files went to the endpoint (the brief stays in user_prompt)."""
+    if not info:
+        return None
+    return {"user_prompt": user[:300], "code": info["name"], "code_files": [f["path"] for f in info["files"]], "code_chars": info["chars"]}
+
+
+def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None, assets=None, kind="screen", code=("", None)):
     for_spec = mode == "spec"
     extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec), prompts.assets_prompt(assets)) if x)
     verb = "Build this artifact:" if kind == "artifact" else None
@@ -82,29 +114,31 @@ def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=
         sys_p = prompts.spec_system_prompt(width, direction)
     else:
         sys_p = prompts.system_prompt(width, direction, cfg.get("allow_cdn", False))
-    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, mode=mode, width=width, ds=ds, data=data, kind="generate" if kind == "screen" else "artifact")
+    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": code[0] + user}], q, mode=mode, width=width, ds=ds, data=data,
+                     kind="generate" if kind == "screen" else "artifact", audit_extra=_code_audit(user, code[1]))
 
 
-def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None, assets=None, kind="screen"):
+def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None, assets=None, kind="screen", code=("", None)):
     if spec:
         sys_p = prompts.spec_system_prompt(width, None)
         extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, True), prompts.data_prompt(data, True)) if x)
         user = prompts.SPEC_ITERATE.format(spec=json.dumps(spec, separators=(",", ":")), instruction=instruction) + ("\n\n" + extra if extra else "")
-        _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": user}], q, temperature=0.4, kind="iterate", mode="spec", width=width, ds=ds, data=data)
+        _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": code[0] + user}], q, temperature=0.4, kind="iterate", mode="spec", width=width, ds=ds, data=data,
+                         audit_extra=_code_audit(user, code[1]))
         return
     sys_p = prompts.artifact_system_prompt(width, cfg.get("allow_cdn", False)) if kind == "artifact" else prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
     extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, False), prompts.assets_prompt(assets)) if x)
-    msgs = [{"role": "user", "content": prompts.ITERATE.format(html=html, instruction=instruction) + ("\n\n" + extra if extra else "")}]
-    _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=0.4, kind="iterate")
+    user = prompts.ITERATE.format(html=html, instruction=instruction) + ("\n\n" + extra if extra else "")
+    _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": code[0] + user}], q, temperature=0.4, kind="iterate", audit_extra=_code_audit(user, code[1]))
 
 
-def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate", mode="html", width=1280, ds=None, data=None):
+def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate", mode="html", width=1280, ds=None, data=None, audit_extra=None):
     buf = ""
     last = 0.0
     t0 = time.time()
     rec = {"kind": kind, "mode": mode, "provider": cfg.get("provider"), "model": cfg.get("model"), "base_url": cfg.get("base_url"),
            "prompt_chars": len(sys_p) + sum(len(m.get("content", "")) for m in msgs),
-           "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300]}
+           "user_prompt": (msgs[-1].get("content", "") if msgs else "")[:300], **(audit_extra or {})}
     render = (lambda text: _spec_partial(text, width, ds, data)) if mode == "spec" else (lambda text: "") if mode in ("element", "text") else prompts.partial_html
     interval = 1.0 if mode == "spec" else 0.25
     try:
@@ -374,7 +408,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204); self.end_headers(); return
         if u.path == "/api/config":
             with CFG_LOCK:
-                out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None)
+                out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None); out["code_budget_resolved"] = code_budget(CFG); out["code_budget_auto"] = code_budget({**CFG, "code_budget": 0})
             out["chrome"] = bool(pack.find_chrome())   # pack screenshots possible on this machine
             return _json(self, out)
         if u.path == "/api/models":
@@ -428,7 +462,7 @@ class Handler(BaseHTTPRequestHandler):
             with CFG_LOCK:
                 if body.get("provider") and body["provider"] != CFG.get("provider"):
                     config.apply_preset(CFG, body["provider"])
-                for k in ("base_url", "model", "variants", "temperature", "max_tokens", "allow_cdn", "api", "effort", "audit", "mode"):
+                for k in ("base_url", "model", "variants", "temperature", "max_tokens", "allow_cdn", "api", "effort", "audit", "mode", "code_budget"):
                     if k in body and body[k] not in (None, ""):
                         CFG[k] = body[k]
                 for k in ("allow_cdn", "audit"):
@@ -439,7 +473,8 @@ class Handler(BaseHTTPRequestHandler):
                 if "base_url" in body:
                     CFG["_custom_base_url"] = True
                 config.save(CFG)
-                return _json(self, config.public(CFG))
+                out = config.public(CFG); out["resolved_mode"] = resolve_mode(CFG, None); out["code_budget_resolved"] = code_budget(CFG); out["code_budget_auto"] = code_budget({**CFG, "code_budget": 0})
+                return _json(self, out)
         if u.path == "/api/generate":
             brief = (body.get("brief") or "").strip()
             if not brief:
@@ -453,10 +488,21 @@ class Handler(BaseHTTPRequestHandler):
             mode = "html" if kind == "artifact" else resolve_mode(cfg, body.get("mode"))
             ds, data, assets = body.get("design_system") or None, body.get("data") or None, body.get("assets") or None
             q: queue.Queue = queue.Queue()
+            code = _code_ctx(cfg, body, brief)
+            if code[1]:
+                q.put({"type": "context", **code[1]})
             for i in range(n):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if (n > 1 and kind == "screen") else None
-                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind), daemon=True).start()
+                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind, code), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/code":   # {project, name, files:[{path, content}], add?} → stored under ~/.localdesign/code/<project>.json
+            pid = str(body.get("project") or "")
+            if not SAFE_ID.match(pid):
+                return _json(self, {"error": "bad project id"}, 400)
+            try:
+                return _json(self, codebase.save(pid, str(body.get("name") or "code"), body.get("files") or [], add=bool(body.get("add"))))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
         if u.path == "/api/library":
             return _json(self, components.library(body.get("design_system") or None))
         if u.path == "/api/assets":   # {project, name, type, data(base64)} → stored under ~/.localdesign/assets/<project>/
@@ -565,8 +611,10 @@ class Handler(BaseHTTPRequestHandler):
             n = max(2, min(int(body.get("max") or 6), 12))
             buf = ""
             t0 = time.time()
+            code_block, code_info = _code_ctx(cfg, body, text)
+            extra = {k: v for k, v in (_code_audit("", code_info) or {}).items() if k != "user_prompt"}
             try:
-                for d in llm.stream(cfg, prompts.PLAN_SYSTEM.replace("{max_screens}", str(n)), [{"role": "user", "content": prompts.plan_user_prompt(text)}], temperature=0.3):
+                for d in llm.stream(cfg, prompts.PLAN_SYSTEM.replace("{max_screens}", str(n)), [{"role": "user", "content": code_block + prompts.plan_user_prompt(text)}], temperature=0.3):
                     if isinstance(d, str):
                         buf += d
                 screens = prompts.extract_json_array(buf)
@@ -574,10 +622,10 @@ class Handler(BaseHTTPRequestHandler):
                 titles = {x["title"] for x in screens}
                 for x in screens:
                     x["links"] = [l for l in (x.get("links") or []) if l in titles and l != x["title"]]
-                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": True, "screens": len(screens), "secs": round(time.time() - t0, 1)})
-                return _json(self, {"screens": screens})
+                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": True, "screens": len(screens), "secs": round(time.time() - t0, 1), **extra})
+                return _json(self, {"screens": screens, "context": code_info})
             except (llm.LLMError, ValueError, json.JSONDecodeError) as e:
-                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": False, "error": str(e)[:300]})
+                audit({"kind": "plan", "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": False, "error": str(e)[:300], **extra})
                 return _json(self, {"error": f"{e}", "raw": buf[:800]}, 502)
         if u.path == "/api/iterate-element":
             el_html, instruction = body.get("html") or "", (body.get("instruction") or "").strip()
@@ -591,7 +639,11 @@ class Handler(BaseHTTPRequestHandler):
             ds_extra = prompts.design_system_prompt(body.get("design_system") or None, False)
             if ds_extra:
                 user += "\n\n" + ds_extra
-            threading.Thread(target=_stream_to_queue, args=(cfg, 0, sys_p, [{"role": "user", "content": user}], q), kwargs={"temperature": 0.4, "kind": "element", "mode": "element"}, daemon=True).start()
+            code_block, code_info = _code_ctx(cfg, body, instruction)
+            if code_info:
+                q.put({"type": "context", **code_info})
+            threading.Thread(target=_stream_to_queue, args=(cfg, 0, sys_p, [{"role": "user", "content": code_block + user}], q),
+                             kwargs={"temperature": 0.4, "kind": "element", "mode": "element", "audit_extra": _code_audit(user, code_info)}, daemon=True).start()
             return _sse_multiplex(self, q, 1)
         if u.path == "/api/test":   # settings → "Test": one tiny model call
             with CFG_LOCK:
@@ -630,7 +682,10 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = dict(CFG)
             width = int(body.get("width") or 1280)
             q: queue.Queue = queue.Queue()
-            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None, body.get("assets") or None, "artifact" if body.get("kind") == "artifact" else "screen"), daemon=True).start()
+            code = _code_ctx(cfg, body, instruction)
+            if code[1]:
+                q.put({"type": "context", **code[1]})
+            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None, body.get("assets") or None, "artifact" if body.get("kind") == "artifact" else "screen", code), daemon=True).start()
             return _sse_multiplex(self, q, 1)
         if u.path == "/api/projects":
             pid = body.get("id") or uuid.uuid4().hex[:10]
@@ -657,9 +712,16 @@ class Handler(BaseHTTPRequestHandler):
                 except FileNotFoundError:
                     pass
             return _json(self, {"error": "not found"}, 404)
+        if u.path.startswith("/api/code/"):
+            pid = u.path.rsplit("/", 1)[1]
+            if SAFE_ID.match(pid) and codebase.delete(pid):
+                return _json(self, {"ok": True})
+            return _json(self, {"error": "not found"}, 404)
         if u.path.startswith("/api/projects/"):
             try:
-                _project_path(u.path.rsplit("/", 1)[1]).unlink()
+                pid = u.path.rsplit("/", 1)[1]
+                _project_path(pid).unlink()
+                codebase.delete(pid)
                 return _json(self, {"ok": True})
             except (ValueError, FileNotFoundError):
                 return _json(self, {"error": "not found"}, 404)

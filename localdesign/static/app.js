@@ -7,13 +7,16 @@
   const frameH = (s) => s.kind === "artifact" ? (s.width >= 1280 ? 880 : HEIGHTS[s.width]) : HEIGHTS[s.width];
 
   // ------------------------------------------------------------ state
-  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {}, assets: [] });
+  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {}, assets: [], code: null });
   let project = blankProject();
   let selected = null;           // screen id
   let cfg = {};
   let aborter = null;
   const frames = new Map();     // id -> element
+  const busyIds = new Set();    // screens with a model call in flight: drives .loading, and renderFrame never marks them as failed
+  const startedAt = {};         // screen id -> ms when its model call started (per-frame elapsed time)
   let saveTimer = null;
+  const kb = n => n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round((n || 0) / 1000)) + " KB";
 
   const viewport = $("#viewport"), canvas = $("#canvas"), emptyEl = $("#empty");
   const promptEl = $("#prompt"), goBtn = $("#goBtn"), stopBtn = $("#stopBtn");
@@ -28,7 +31,7 @@
   // ------------------------------------------------------------ camera
   function applyCamera() {
     const c = project.camera;
-    canvas.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.z})`;
+    canvas.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.z})`; canvas.style.setProperty("--z", c.z);
     viewport.style.backgroundPosition = `${c.x}px ${c.y}px`;
     viewport.style.backgroundSize = c.z < 0.25 ? `${96 * c.z}px ${96 * c.z}px` : `${24 * c.z}px ${24 * c.z}px`;   // coarser grid when zoomed far out
     $("#zoomLabel").textContent = Math.round(c.z * 100) + "%";
@@ -93,7 +96,8 @@
     const v = $(".ver", el); v.textContent = "v" + (s.versions.length); v.title = s.versions.length > 1 ? "Click to switch version" : "";
     v.style.display = s.versions.length > 1 ? "" : "none";
     el.classList.toggle("selected", s.id === selected);
-    if (!s.html && !el.classList.contains("loading")) { el.classList.add("noresult"); const er = $(".err", el); if (!er.textContent) { er.textContent = "No result saved (page was closed mid-generation?). Click ↻ to regenerate."; er.classList.remove("hidden"); } }
+    const busy = busyIds.has(s.id); el.classList.toggle("loading", busy);
+    if (!s.html && !busy) { el.classList.add("noresult"); const er = $(".err", el); if (!er.textContent) { er.textContent = "No result saved (page was closed mid-generation?). Click ↻ to regenerate."; er.classList.remove("hidden"); } }
     else if (s.html && !el.classList.contains("failed")) { el.classList.remove("noresult"); const er = $(".err", el); er.textContent = ""; er.classList.add("hidden"); }
     if ($("iframe", el).dataset.html !== s.html) setFrameHTML(el, s.html);
     return el;
@@ -115,7 +119,7 @@
     // drag by bar
     $(".bar", el).addEventListener("pointerdown", e => {
       if (e.button !== 0 || space || e.target.closest("button, .title, .ver")) return;
-      e.stopPropagation();
+      e.stopPropagation(); select(s.id);   // stopPropagation also skips the frame's own select handler
       const st = { x: e.clientX, y: e.clientY, sx: s.x, sy: s.y };
       const mv = ev => { s.x = st.sx + (ev.clientX - st.x) / project.camera.z; s.y = st.sy + (ev.clientY - st.y) / project.camera.z; el.style.left = s.x + "px"; el.style.top = s.y + "px"; };
       const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); scheduleSave(); drawArrows(); };
@@ -196,27 +200,48 @@
   // ------------------------------------------------------------ generate / iterate
   let genKind = "screen";
   $$("#kindSeg button").forEach(b => b.addEventListener("click", () => { genKind = b.dataset.kind; $$("#kindSeg button").forEach(x => x.classList.toggle("on", x === b)); if (genKind === "artifact") { $("#variants").value = "1"; } promptEl.placeholder = genKind === "artifact" ? "Describe an app, tool, chart, game or document to build…" : "Describe a screen to design…"; }));
-  const genExtras = () => ({ mode: $("#engine").value, kind: genKind, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined, assets: (project.assets || []).length ? project.assets : undefined });
-  let progTimer = null, progStart = 0, progBytes = {};
+  const genExtras = () => ({ mode: $("#engine").value, kind: genKind, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined, assets: (project.assets || []).length ? project.assets : undefined, code: codeRef() });
+  let progTimer = null, progStart = 0, progBytes = {}, ctxNote = "";
+  const LOCAL = ["ollama", "lmstudio", "llamacpp", "vllm", "custom"];
+  function setLoading(s, on) {
+    if (on) { busyIds.add(s.id); startedAt[s.id] = Date.now(); } else busyIds.delete(s.id);
+    const el = frames.get(s.id); if (!el) return;
+    el.classList.toggle("loading", on);
+    if (on) {
+      el.classList.remove("failed", "noresult", "streaming"); const er = $(".err", el); er.textContent = ""; er.classList.add("hidden");
+      delete $(".prog", el).dataset.phase; progBytes[s.id] = 0; $(".wait .wlbl", el).textContent = waitLabel(s.id, 0);
+    } else { el.classList.remove("streaming", "queued"); $(".prog", el).textContent = ""; }
+  }
+  function waitLabel(id, secs) {
+    const el = frames.get(id); if (!el) return "";
+    if (el.classList.contains("queued")) return "Queued";
+    const t = secs ? ` ${secs}s` : "", k = (progBytes[id] || 0) / 1024;
+    if (k) return `Writing… ${k.toFixed(0)} KB ·${t}`;
+    if ($(".prog", el).dataset.phase === "thinking") return `Model is thinking…${t}`;
+    return `Waiting for ${cfg.model || "the model"}…${t}` + (secs >= 20 && LOCAL.includes(cfg.provider) ? " (a local model can take a minute to load)" : "");
+  }
   function setBusy(b, label) {
     goBtn.disabled = b; stopBtn.classList.toggle("hidden", !b);
     clearInterval(progTimer);
     if (b) {
-      progStart = Date.now(); progBytes = {};
+      progStart = Date.now(); progBytes = {}; ctxNote = "";
       progTimer = setInterval(() => {
         const secs = Math.round((Date.now() - progStart) / 1000);
-        const kb = Object.values(progBytes).reduce((a, n) => a + n, 0) / 1024;
-        $("#status").textContent = `${label} · ${secs}s · ${kb.toFixed(0)} KB received`;
+        const total = Object.values(progBytes).reduce((a, n) => a + n, 0) / 1024;
+        $("#status").textContent = `${label} · ${secs}s · ${total.toFixed(0)} KB received` + (ctxNote ? ` · ${ctxNote}` : "");
         let thinking = 0;
         for (const [id, el] of frames) if (el.classList.contains("loading")) {
-          const p = $(".prog", el), kb = (progBytes[id] || 0) / 1024;
-          if (p.dataset.phase === "thinking" && !kb) { thinking++; p.textContent = `thinking… ${secs}s`; }
-          else p.textContent = `${secs}s · ${kb.toFixed(0)} KB`;
+          const p = $(".prog", el), k = (progBytes[id] || 0) / 1024, fs = Math.round((Date.now() - (startedAt[id] || progStart)) / 1000);
+          if (el.classList.contains("queued")) p.textContent = "queued";
+          else if (p.dataset.phase === "thinking" && !k) { thinking++; p.textContent = `thinking… ${fs}s`; }
+          else p.textContent = `${fs}s · ${k.toFixed(0)} KB`;
+          $(".wait .wlbl", el).textContent = waitLabel(id, fs);
         }
         if (thinking) $("#status").textContent += ` · model is thinking (${thinking})`;
+        $("#status").title = $("#status").textContent;
       }, 1000);
       $("#status").textContent = label + " · 0s";
-    } else $("#status").textContent = "";
+    } else { $("#status").textContent = ""; $("#status").title = ""; }
   }
 
   async function generate(brief) {
@@ -226,7 +251,8 @@
       const s = { id: uid(), title: shortTitle(brief) + (n > 1 ? ` ${String.fromCharCode(65 + i)}` : ""), brief, x: i * (width + 80), y, width, html: "", versions: [], kind: genKind };
       project.screens.push(s); batch.push(s);
     }
-    renderAll(); batch.forEach(s => frames.get(s.id).classList.add("loading"));
+    batch.forEach(s => busyIds.add(s.id));   // before renderAll, so the new empty frames render as loading, not as "no result"
+    renderAll(); batch.forEach(s => setLoading(s, true));
     if (project.screens.length === n) fitAll(); else panTo(batch[0]);
     const context = projectContext(batch);
     aborter = new AbortController(); setBusy(true, `Generating ${n} variant${n > 1 ? "s" : ""}`);
@@ -237,7 +263,7 @@
   }
 
   async function iterate(s, instruction) {
-    const el = frames.get(s.id); el.classList.add("loading");
+    setLoading(s, true);
     const prev = s.html; aborter = new AbortController(); setBusy(true, "Applying change");
     try {
       await streamPost("/api/iterate", { html: prev, instruction, width: s.width, spec: s.spec || undefined, ...genExtras(), kind: s.kind || "screen" }, ev => handleEvent(ev, [s]), aborter.signal);
@@ -247,8 +273,7 @@
 
   async function regenerate(s) {
     if (goBtn.disabled) { toast("Wait for the current generation to finish."); return; }
-    const el = frames.get(s.id); const er = $(".err", el); er.textContent = ""; er.classList.add("hidden");
-    el.classList.remove("failed", "noresult"); el.classList.add("loading");
+    setLoading(s, true);
     const brief = s.brief || s.title;
     aborter = new AbortController(); setBusy(true, "Regenerating");
     try {
@@ -258,34 +283,48 @@
   }
 
   function handleEvent(ev, batch) {
+    if (ev.type === "context") { noteContext(ev); return; }
     const s = batch[ev.i]; if (!s) return;
     const el = frames.get(s.id); if (!el) return;
     if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
-    else if (ev.type === "partial") { delete $(".prog", el).dataset.phase; progBytes[s.id] = ev.chars || (ev.html || "").length; if (ev.html) setFrameHTML(el, ev.html); }
+    else if (ev.type === "partial") { delete $(".prog", el).dataset.phase; progBytes[s.id] = ev.chars || (ev.html || "").length; if (ev.html) { setFrameHTML(el, ev.html); el.classList.add("streaming"); } }
+    if (ev.type === "status" || ev.type === "partial") $(".wait .wlbl", el).textContent = waitLabel(s.id, Math.round((Date.now() - (startedAt[s.id] || progStart)) / 1000));   // don't wait for the 1 s tick
     else if (ev.type === "done") {
       s.html = ev.html; s.versions.push(ev.html); s.spec = ev.spec || null; s.specVersions = s.specVersions || []; s.specVersions.push(ev.spec || null);
-      setFrameHTML(el, ev.html); el.classList.remove("loading", "failed", "noresult"); $(".prog", el).textContent = ""; const er0 = $(".err", el); er0.textContent = ""; er0.classList.add("hidden");
+      setLoading(s, false); setFrameHTML(el, ev.html); el.classList.remove("failed", "noresult"); const er0 = $(".err", el); er0.textContent = ""; er0.classList.add("hidden");
       renderFrame(s); scheduleSave(); drawArrows();
       if (ev.warning) { toast("⚠ " + s.title + ": " + ev.warning, 7000); $(".title", el).title = ev.warning; }
     } else if (ev.type === "error") {
-      el.classList.remove("loading"); el.classList.add("failed"); $(".prog", el).textContent = ""; const er = $(".err", el); er.textContent = ev.message; er.classList.remove("hidden");
+      setLoading(s, false); el.classList.add("failed"); const er = $(".err", el); er.textContent = ev.message; er.classList.remove("hidden");
       if (s.html) setFrameHTML(el, s.html);
     }
   }
   function finish(batch) {
     setBusy(false); aborter = null;
     for (const s of batch) {
+      setLoading(s, false);
       const el = frames.get(s.id); if (!el) continue;
-      el.classList.remove("loading"); $(".prog", el).textContent = "";
       if (!s.versions.length && !$(".err", el).textContent) { $(".err", el).textContent = "Stopped before any result. Click ↻ to regenerate."; $(".err", el).classList.remove("hidden"); el.classList.add("noresult"); }
     }
     scheduleSave();
+  }
+  function noteContext(ev) {   // the server says which attached code files went into the prompt
+    const n = ev.files.length;
+    ctxNote = n ? `📎 ${n} file${n > 1 ? "s" : ""} from ${ev.name}` : `📎 ${ev.name} (file list only)`;
+    const w = [];
+    if (ev.unresolved && ev.unresolved.length) w.push(`not found in ${ev.name}: ${ev.unresolved.map(t => "@" + t).join(", ")}`);
+    if (ev.omitted && ev.omitted.length) w.push(`${ev.omitted.length} file${ev.omitted.length > 1 ? "s" : ""} did not fit the ${kb(ev.budget)} code budget (Settings): ${ev.omitted.slice(0, 4).join(", ")}${ev.omitted.length > 4 ? "…" : ""}`);
+    const cut = ev.files.filter(f => f.truncated); if (cut.length) w.push(`cut short to fit the ${kb(ev.budget)} budget: ${cut.map(f => f.path).join(", ")}`);
+    if (w.length) toast("⚠ " + w.join("\n"), 9000);
   }
   function panTo(s) {
     const c = project.camera, vw = viewport.clientWidth;
     c.x = (vw - s.width * c.z) / 2 - s.x * c.z; c.y = 40 - s.y * c.z; applyCamera();
   }
-  function shortTitle(b) { const t = b.replace(/\s+/g, " ").trim(); return t.length > 42 ? t.slice(0, 40).replace(/\s\S*$/, "") + "…" : t; }
+  function shortTitle(b) {
+    const t = b.replace(/(^|\s)@(\S+)/g, (m, sp, p) => sp + (p.replace(/\/$/, "").split("/").pop() || p)).replace(/\s+/g, " ").trim();   // "@src/pages/Settings.tsx" → "Settings.tsx"
+    return t.length > 42 ? t.slice(0, 40).replace(/\s\S*$/, "") + "…" : t;
+  }
   function projectContext(exclude) {
     const others = project.screens.filter(s => !exclude.includes(s) && s.html);
     if (!others.length) return null;
@@ -294,13 +333,22 @@
 
   $("#promptBar").addEventListener("submit", e => {
     e.preventDefault(); const text = promptEl.value.trim(); if (!text || goBtn.disabled) return;
-    promptEl.value = ""; autosize();
+    promptEl.value = ""; autosize(); hideMention();
     const s = selected && screenById(selected);
     if (elSel && s && elSel.frame === s.id) iterateElement(s, text);
     else if (s && s.html) iterate(s, text); else generate(text);
   });
-  promptEl.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
-  promptEl.addEventListener("beforeinput", e => { if (e.inputType === "insertLineBreak" || (e.inputType === "insertParagraph")) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
+  promptEl.addEventListener("keydown", e => {
+    if (e.isComposing) return;
+    if (mentionOpen()) {   // @file completion owns the arrows, Enter/Tab and Esc while it is open
+      const n = mention.items.length;
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && n) { e.preventDefault(); mention.idx = (mention.idx + (e.key === "ArrowDown" ? 1 : n - 1)) % n; renderMention(); return; }
+      if ((e.key === "Enter" || e.key === "Tab") && n && !e.shiftKey) { e.preventDefault(); pickMention(mention.idx); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hideMention(); return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#promptBar").requestSubmit(); }
+  });
+  promptEl.addEventListener("beforeinput", e => { if ((e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") && !mentionOpen()) { e.preventDefault(); $("#promptBar").requestSubmit(); } });
   function autosize() { if (!promptEl.value) { promptEl.style.height = ""; return; } promptEl.style.height = "auto"; promptEl.style.height = Math.min(200, promptEl.scrollHeight) + "px"; }
   promptEl.addEventListener("input", autosize);
   stopBtn.addEventListener("click", () => aborter && aborter.abort());
@@ -409,22 +457,28 @@
     clearTimeout(saveTimer); $("#saveState").textContent = "·";
     saveTimer = setTimeout(save, 800);
   }
-  async function save() {
-    if (!project.screens.length && !project.id) { $("#saveState").textContent = ""; return; }
+  let saveChain = Promise.resolve();
+  function save(force = false) {   // serialised: two saves racing on a new project would otherwise create two project ids
+    saveChain = saveChain.then(() => doSave(force));
+    return saveChain;
+  }
+  async function doSave(force) {
+    if (!force && !project.screens.length && !project.id) { $("#saveState").textContent = ""; return; }
     try {
       const r = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(project) });
       const d = await r.json(); project.id = d.id; localStorage.setItem("ld.last", d.id); $("#saveState").textContent = "saved";
       setTimeout(() => { if ($("#saveState").textContent === "saved") $("#saveState").textContent = ""; }, 1500);
     } catch { $("#saveState").textContent = "save failed"; }
   }
+  async function ensureProject() { if (!project.id) await save(true); return !!project.id; }   // uploads (assets, code) need a project id
   async function loadProject(id) {
     const r = await fetch("/api/projects/" + id); if (!r.ok) return false;
-    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.data ||= {}; project.designSystem ||= null; project.assets ||= []; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
-    frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); localStorage.setItem("ld.last", id); return true;
+    project = await r.json(); project.camera ||= { x: 80, y: 60, z: 1 }; project.data ||= {}; project.designSystem ||= null; project.assets ||= []; project.code ||= null; project.screens.forEach(s => { s.versions ||= s.html ? [s.html] : []; });
+    frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); codeChanged(); localStorage.setItem("ld.last", id); return true;
   }
   function newProject() {
     project = blankProject();
-    frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); localStorage.removeItem("ld.last");
+    frames.forEach(el => el.remove()); frames.clear(); select(null); renderAll(); codeChanged(); localStorage.removeItem("ld.last");
   }
   async function showProjects() {
     const r = await fetch("/api/projects"); const { projects } = await r.json();
@@ -448,7 +502,7 @@
   $("#importBtn").addEventListener("click", () => $("#importFile").click());
   $("#importFile").addEventListener("change", async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { const p = JSON.parse(await f.text()); p.id = null; project = p; project.screens.forEach(s => { s.versions ||= [s.html]; }); frames.forEach(el => el.remove()); frames.clear(); renderAll(); scheduleSave(); $("#projects").close(); fitAll(); }
+    try { const p = JSON.parse(await f.text()); p.id = null; p.code = null; project = p; project.screens.forEach(s => { s.versions ||= [s.html]; }); frames.forEach(el => el.remove()); frames.clear(); renderAll(); codeChanged(); scheduleSave(); $("#projects").close(); fitAll(); }   // attached code lives on the server, not in the JSON
     catch { toast("Not a valid project file"); }
     e.target.value = "";
   });
@@ -520,18 +574,20 @@
   $("#linkDone").addEventListener("click", () => $("#linkPop").classList.add("hidden"));
   // element-scoped AI edit
   async function iterateElement(s, instruction) {
-    const el = frames.get(s.id), info = elSel.info; el.classList.add("loading");
+    const el = frames.get(s.id), info = elSel.info; setLoading(s, true);
     const css = (s.html.match(/<style[^>]*>([\s\S]*?)<\/style>/i) || [, ""])[1];
     const root = (css.match(/:root\s*\{[^}]*\}/g) || []).join("\n");
     aborter = new AbortController(); setBusy(true, "Changing element");
     try {
-      await streamPost("/api/iterate-element", { html: info.html, css: root || css.slice(0, 3000), instruction, width: s.width, design_system: project.designSystem || undefined }, ev => {
-        if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
+      await streamPost("/api/iterate-element", { html: info.html, css: root || css.slice(0, 3000), instruction, width: s.width, design_system: project.designSystem || undefined, code: codeRef() }, ev => {
+        if (ev.type === "context") noteContext(ev);
+        else if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
+        else if (ev.type === "partial") progBytes[s.id] = ev.chars || 0;
         else if (ev.type === "done") { postFrame(s.id, { type: "replace", html: ev.html }); if (ev.warning) toast("⚠ " + ev.warning, 6000); }
         else if (ev.type === "error") toast("Error: " + ev.message, 6000);
       }, aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
-    finally { el.classList.remove("loading"); $(".prog", el).textContent = ""; setBusy(false); aborter = null; }
+    finally { setLoading(s, false); setBusy(false); aborter = null; }
   }
   // cross-frame drag (element from screen A dropped into screen B)
   function startXDrag(from, html, desc) {
@@ -616,9 +672,11 @@
     const text = $("#flowText").value.trim(); if (!text) { $("#flowMsg").textContent = "Describe the flow first."; return; }
     $("#flowMsg").textContent = "planning…"; $("#flowPlan").disabled = true;
     try {
-      const r = await fetch("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, max: +$("#flowMax").value || 6 }) });
+      const r = await fetch("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, max: +$("#flowMax").value || 6, code: codeRef() }) });
       const d = await r.json(); if (d.error) throw new Error(d.error);
-      plan = d.screens; renderPlan(); $("#flowMsg").textContent = `${plan.length} screens planned`; $("#flowGo").disabled = !plan.length;
+      plan = d.screens; renderPlan(); $("#flowGo").disabled = !plan.length;
+      $("#flowMsg").textContent = `${plan.length} screens planned` + (d.context ? ` · using ${d.context.files.length} file${d.context.files.length === 1 ? "" : "s"} from ${d.context.name}` : "");
+      if (d.context) noteContext(d.context);
     } catch (e) { $("#flowMsg").textContent = "Planning failed: " + e.message; }
     finally { $("#flowPlan").disabled = false; }
   });
@@ -636,14 +694,18 @@
     if (!plan.length || goBtn.disabled) return; flowDlg.close();
     const width = project.device, y = nextRowY(); const titles = plan.map(p => p.title);
     const batch = plan.map((p, i) => ({ id: uid(), title: p.title, brief: p.brief, x: i * (width + 120), y, width, html: "", versions: [], flow: { links: p.links || [] } }));
-    project.screens.push(...batch); renderAll(); batch.forEach(s => frames.get(s.id).classList.add("loading")); fitAll();
+    project.screens.push(...batch); batch.forEach(s => busyIds.add(s.id)); renderAll();
+    batch.forEach((s, i) => { if (i) frames.get(s.id).classList.add("queued"); setLoading(s, true); }); fitAll();
+    const flowText = $("#flowText").value;   // @mentions in the flow description apply to every screen of the flow
     aborter = new AbortController(); setBusy(true, `Generating flow (${batch.length} screens)`);
     try {
       for (let i = 0; i < batch.length; i++) {
         const s = batch[i], p = plan[i];
+        frames.get(s.id)?.classList.remove("queued"); startedAt[s.id] = Date.now();
         const context = (projectContext([s]) || "") + "\n" + `This screen is part of a flow with these screens: ${titles.join(", ")}.\nNavigation elements that lead to another screen must carry data-link="<exact screen title>" (in spec mode: set "link" on buttons/nav items/list rows). This screen links to: ${(p.links || []).join(", ") || "none"}.`;
         $("#status").textContent = `Flow: ${i + 1}/${batch.length} · ${s.title}`;
-        await streamPost("/api/generate", { brief: `${s.title}: ${s.brief}`, variants: 1, width, context, ...genExtras() }, ev => handleEvent(ev, [s]), aborter.signal);
+        const ex = genExtras(); if (ex.code) ex.code.text = flowText;
+        await streamPost("/api/generate", { brief: `${s.title}: ${s.brief}`, variants: 1, width, context, ...ex }, ev => handleEvent(ev, [s]), aborter.signal);
         if (aborter.signal.aborted) break;
       }
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
@@ -719,8 +781,7 @@
   }
   $("#assetUpload").addEventListener("click", () => $("#assetFile").click());
   $("#assetFile").addEventListener("change", async e => {
-    if (!project.id) { await save(); }
-    if (!project.id) { toast("Generate or name something first so the project exists."); return; }
+    if (!(await ensureProject())) { toast("Could not create the project on the server — is lde still running?"); return; }
     for (const f of e.target.files) {
       const b64 = await new Promise(res => { const rd = new FileReader(); rd.onload = () => res(rd.result.split(",")[1]); rd.readAsDataURL(f); });
       const r = await fetch("/api/assets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: project.id, name: f.name, type: f.type || "image/png", data: b64 }) });
@@ -729,6 +790,190 @@
     }
     e.target.value = ""; renderAssets(); scheduleSave(); toast(`${project.assets.length} asset${project.assets.length === 1 ? "" : "s"} — generated screens will use them`);
   });
+
+  // ------------------------------------------------------------ code context: attach a folder, reference its files with @path
+  // Same filter as codebase.py (the server re-checks): text sources only; no vendored/build dirs, lockfiles, minified bundles or secrets.
+  const CODE = {
+    skipDirs: new Set("node_modules .git .hg .svn dist build out .next .nuxt .svelte-kit .output .vercel coverage __pycache__ .venv venv site-packages .tox .mypy_cache .pytest_cache .ruff_cache vendor target .idea .vscode .turbo .cache .parcel-cache Pods DerivedData .gradle obj .expo .angular storybook-static bower_components .yarn .pnpm-store .terraform".split(" ")),
+    ext: new Set("js jsx ts tsx mjs cjs mts cts vue svelte astro html htm css scss sass less styl pcss json json5 jsonc md mdx txt yml yaml toml ini xml svg graphql gql prisma sql py rb go rs java kt kts swift dart php cs cshtml razor fs scala ex exs erb hbs handlebars ejs pug liquid njk twig jinja j2 lua r sh bash zsh ps1 bat tf proto csv".split(" ")),
+    names: new Set(["dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile", ".env.example", ".env.sample", ".env.template"]),
+    skipNames: new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "cargo.lock", "uv.lock", "composer.lock", "gemfile.lock", "bun.lockb", "pipfile.lock", "go.sum", ".ds_store", "secrets.yml", "secrets.yaml", "secrets.json", "credentials.json", "credentials.yml", "service-account.json", "id_rsa", "id_ed25519"]),
+    maxFile: 256000, maxTotal: 8e6, maxFiles: 5000,
+  };
+  function codeKeep(path) {
+    const parts = path.split("/"); if (parts.slice(0, -1).some(d => CODE.skipDirs.has(d))) return false;
+    const name = parts[parts.length - 1].toLowerCase();
+    if (CODE.skipNames.has(name) || /\.(min\.js|min\.css|map|pem|key|p12|pfx)$/.test(name)) return false;
+    if (name === ".env" || (name.startsWith(".env.") && !CODE.names.has(name))) return false;
+    const dot = name.lastIndexOf(".");
+    return CODE.names.has(name) || (dot > 0 && CODE.ext.has(name.slice(dot + 1)));
+  }
+  function codeRef() { return project.code && project.id ? { project: project.id, pins: project.code.pinned || [] } : undefined; }
+  let codeDirs = [], codeSizes = new Map();
+  function codeChanged() {   // project.code changed: chip, 📎 button, completion index
+    const c = project.code;
+    codeDirs = []; codeSizes = new Map();
+    if (c) {
+      const dirs = new Set();
+      for (const f of c.files) { codeSizes.set(f.path, f.size); const p = f.path.split("/"); for (let i = 1; i < p.length; i++) dirs.add(p.slice(0, i).join("/") + "/"); }
+      codeDirs = [...dirs];
+      c.pinned = (c.pinned || []).filter(p => codeSizes.has(p));
+    }
+    $("#codeChip").classList.toggle("hidden", !c); $("#attachBtn").classList.toggle("on", !!c);
+    $("#attachBtn").title = c ? `Code: ${c.name} — click to see files and pins; type @ in the prompt to reference one` : "Attach a code folder so prompts can reference your existing files with @ (or drop a folder anywhere)";
+    if (c) { $("#codeName").textContent = c.name; $("#codeMeta").textContent = `${c.files.length} files${c.pinned.length ? ` · ${c.pinned.length} pinned` : ""} · type @`; }
+  }
+  async function readCodeFiles(items) {   // [{file, path}] → text contents that pass the filter, within the caps
+    const files = []; let total = 0, skipped = 0, tooMuch = 0;
+    for (const { file, path } of items) {
+      if (!codeKeep(path) || file.size > CODE.maxFile) { skipped++; continue; }
+      if (files.length >= CODE.maxFiles || total + file.size > CODE.maxTotal) { tooMuch++; continue; }
+      let text; try { text = await file.text(); } catch { skipped++; continue; }
+      if (text.includes("\u0000")) { skipped++; continue; }
+      files.push({ path, content: text }); total += text.length;
+    }
+    return { files, skipped, tooMuch };
+  }
+  async function attachCode(items, add = false) {
+    if (!items.length) return;
+    const first = items[0].path.split("/")[0];
+    const root = items.every(it => it.path.startsWith(first + "/")) ? first : null;   // a picked/dropped folder: strip its own name
+    const rel = root ? items.map(it => ({ file: it.file, path: it.path.slice(root.length + 1) })) : items;
+    toast(`Reading ${rel.length} file${rel.length === 1 ? "" : "s"}…`, 60000);
+    const { files, skipped, tooMuch } = await readCodeFiles(rel);
+    if (!files.length) { toast("No source files there — only text files are read (node_modules, build output, binaries, lockfiles and .env are skipped).", 7000); return; }
+    if (!(await ensureProject())) { toast("Could not create the project on the server — is lde still running?"); return; }
+    let d;
+    try {
+      const r = await fetch("/api/code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: project.id, name: root || (add && project.code && project.code.name) || "code", files, add: add && !!project.code }) });
+      d = await r.json();
+    } catch (e) { toast("Upload failed: " + e.message, 6000); return; }
+    if (d.error) { toast(d.error, 7000); return; }
+    const keepPins = add && project.code ? project.code.pinned || [] : [];
+    project.code = { name: d.name, files: d.files, bytes: d.bytes, pinned: [...new Set([...keepPins, ...(add && project.code ? [] : d.style || [])])] };
+    codeChanged(); scheduleSave(); if ($("#codeDlg").open) renderCodeList();
+    const skip = skipped + (d.skipped || 0);
+    toast(`📁 ${d.name}: ${d.files.length} files attached${skip ? ` (${skip} non-source skipped)` : ""}.` +
+      (tooMuch ? ` ⚠ ${tooMuch} more did not fit the ${kb(CODE.maxTotal)} limit — attach a subfolder like src/ instead.` : "") +
+      (project.code.pinned.length ? `\nPinned as style context: ${project.code.pinned.join(", ")}.` : "") +
+      `\nType @ in the prompt to reference a file, e.g. @${(d.files.find(f => /\.(tsx|jsx|vue|svelte|html)$/.test(f.path)) || d.files[0]).path}`, tooMuch ? 12000 : 9000);
+  }
+  async function detachCode() {
+    if (!project.code || !confirm(`Detach “${project.code.name}”? Prompts will stop seeing its files.`)) return;
+    if (project.id) await fetch("/api/code/" + project.id, { method: "DELETE" }).catch(() => {});
+    project.code = null; codeChanged(); scheduleSave(); $("#codeDlg").close();
+  }
+  $("#attachBtn").addEventListener("click", () => project.code ? openCodeDlg() : $("#codeFolder").click());
+  $("#codeChip").addEventListener("click", e => { if (!e.target.closest("#codeDetach")) openCodeDlg(); });
+  $("#codeDetach").addEventListener("click", e => { e.stopPropagation(); detachCode(); });
+  $("#codeFolder").addEventListener("change", e => { const fs = [...e.target.files]; e.target.value = ""; attachCode(fs.map(f => ({ file: f, path: f.webkitRelativePath || f.name }))); });
+  $("#codeFiles").addEventListener("change", e => { const fs = [...e.target.files]; e.target.value = ""; attachCode(fs.map(f => ({ file: f, path: f.name })), true); });
+  // dialog: file list, pins
+  function openCodeDlg() { $("#codeFilter").value = ""; renderCodeList(); $("#codeDlg").showModal(); }
+  function renderCodeList() {
+    const c = project.code, ul = $("#codeList"); if (!c) { ul.innerHTML = ""; return; }
+    const pins = new Set(c.pinned);
+    $("#codeSummary").innerHTML = `<b>${esc(c.name)}</b> · ${c.files.length} files · ${kb(c.bytes)} · ${pins.size} pinned`;
+    $("#codeBudget").textContent = kb(cfg.code_budget_resolved || 0);
+    const q = $("#codeFilter").value.trim().toLowerCase();
+    const list = c.files.filter(f => !q || f.path.toLowerCase().includes(q)).sort((a, b) => (pins.has(b.path) - pins.has(a.path)) || a.path.localeCompare(b.path));
+    ul.innerHTML = list.slice(0, 400).map(f => `<li class="${pins.has(f.path) ? "pinned" : ""}"><label title="Pin: include in every prompt"><input type="checkbox" data-p="${esc(f.path)}" ${pins.has(f.path) ? "checked" : ""}><span class="p">${esc(f.path)}</span></label><span class="meta">${kb(f.size)}</span></li>`).join("")
+      + (list.length > 400 ? `<li class="muted">… ${list.length - 400} more — type to filter</li>` : "") + (!list.length ? `<li class="muted">No file matches.</li>` : "");
+  }
+  $("#codeFilter").addEventListener("input", renderCodeList);
+  $("#codeList").addEventListener("change", e => {
+    const p = e.target.dataset.p; if (!p || !project.code) return;
+    const pins = new Set(project.code.pinned); e.target.checked ? pins.add(p) : pins.delete(p); project.code.pinned = [...pins];
+    e.target.closest("li").classList.toggle("pinned", e.target.checked);
+    $("#codeSummary").innerHTML = `<b>${esc(project.code.name)}</b> · ${project.code.files.length} files · ${kb(project.code.bytes)} · ${pins.size} pinned`;
+    codeChanged(); scheduleSave();
+  });
+  $("#codeRemove").addEventListener("click", detachCode);
+  $("#codeReplace").addEventListener("click", () => $("#codeFolder").click());
+  $("#codeAddFiles").addEventListener("click", () => $("#codeFiles").click());
+  $("#codeDone").addEventListener("click", () => $("#codeDlg").close());
+  // drop a folder (or files) anywhere on the window
+  let fileDrag = 0;
+  const hasFiles = e => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files");
+  const endFileDrag = () => { fileDrag = 0; document.body.classList.remove("filedrag"); $("#dropHint").classList.add("hidden"); };
+  window.addEventListener("dragenter", e => { if (!hasFiles(e)) return; fileDrag++; document.body.classList.add("filedrag"); $("#dropHint").classList.remove("hidden"); });
+  window.addEventListener("dragover", e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
+  window.addEventListener("dragleave", e => { if (hasFiles(e) && --fileDrag <= 0) endFileDrag(); });
+  window.addEventListener("drop", async e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); endFileDrag();   // never let the browser navigate to the dropped file
+    const pending = droppedEntries(e.dataTransfer);   // must read the DataTransfer synchronously, inside the event
+    const other = document.querySelector("dialog[open]:not(#codeDlg)");
+    if (other) { toast("Close the dialog first, then drop the folder to attach it as code context."); return; }
+    const { items, dirs } = await pending;
+    attachCode(items, !(dirs === 1));   // one folder replaces the attached code; loose files are added to it
+  });
+  async function droppedEntries(dt) {
+    const entries = [...dt.items].filter(i => i.kind === "file").map(i => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+    const plain = [...dt.files];
+    if (!entries.some(Boolean)) return { items: plain.map(f => ({ file: f, path: f.name })), dirs: 0 };
+    const items = []; let dirs = 0, seen = 0;
+    const walk = async (entry, prefix) => {
+      if (++seen > 60000) return;
+      if (entry.isFile) { const f = await new Promise((res, rej) => entry.file(res, rej)).catch(() => null); if (f) items.push({ file: f, path: prefix + entry.name }); return; }
+      if (CODE.skipDirs.has(entry.name)) return;   // don't even walk node_modules & co
+      const rd = entry.createReader();
+      for (;;) { const batch = await new Promise((res, rej) => rd.readEntries(res, rej)).catch(() => []); if (!batch.length) break; for (const c of batch) await walk(c, prefix + entry.name + "/"); }
+    };
+    for (const en of entries) if (en) { if (en.isDirectory) dirs++; await walk(en, ""); }
+    return { items, dirs };
+  }
+  // @ completion in the prompt
+  const mentionPop = $("#mentionPop"); let mention = null;   // { start, query, items, idx }
+  const mentionOpen = () => !!mention && !mentionPop.classList.contains("hidden");
+  function hideMention() { mention = null; mentionPop.classList.add("hidden"); }
+  function mentionAt() {
+    if (!project.code || promptEl.selectionStart !== promptEl.selectionEnd) return null;
+    const pos = promptEl.selectionStart, m = promptEl.value.slice(0, pos).match(/(^|[\s(\[{"'`])@([^\s@]*)$/);
+    return m ? { start: pos - m[2].length - 1, query: m[2] } : null;
+  }
+  function mentionItems(q) {
+    const ql = q.toLowerCase(), out = [];
+    const score = (path, dir) => {
+      const pl = path.toLowerCase(); if (pl === ql) return -1;
+      const base = (dir ? pl.slice(0, -1) : pl).split("/").pop();
+      if (!ql) return path.replace(/\/$/, "").includes("/") ? -1 : dir ? 0 : 1;   // empty query: top-level folders, then root files
+      return pl.startsWith(ql) ? 0 : base.startsWith(ql) ? 1 : base.includes(ql) ? 2 : pl.includes(ql) ? 3 : -1;
+    };
+    for (const d of codeDirs) { const s = score(d, true); if (s >= 0) out.push({ path: d, dir: true, s }); }
+    for (const f of project.code.files) { const s = score(f.path, false); if (s >= 0) out.push({ path: f.path, dir: false, s }); }
+    const depth = p => p.replace(/\/$/, "").split("/").length;
+    return out.sort((a, b) => a.s - b.s || depth(a.path) - depth(b.path) || a.path.length - b.path.length || a.path.localeCompare(b.path)).slice(0, 10);
+  }
+  function showMention() {
+    const at = mentionAt(); if (!at) { hideMention(); return; }
+    const same = mention && mention.query === at.query;
+    mention = { ...at, items: mentionItems(at.query), idx: same ? mention.idx : 0 };
+    renderMention();
+  }
+  function renderMention() {
+    const pins = new Set(project.code.pinned || []);
+    mentionPop.innerHTML = mention.items.length ? mention.items.map((it, i) => {
+      const p = it.dir ? it.path.slice(0, -1) : it.path, k = p.lastIndexOf("/");
+      const tag = it.dir ? `folder · ${project.code.files.filter(f => f.path.startsWith(it.path)).length} files` : pins.has(it.path) ? "pinned" : kb(codeSizes.get(it.path));
+      return `<button type="button" role="option" data-i="${i}" class="${i === mention.idx ? "on" : ""}"><span class="base">${esc(p.slice(k + 1))}${it.dir ? "/" : ""}</span><span class="dir">${esc(k >= 0 ? p.slice(0, k + 1) : "")}</span><span class="tag">${tag}</span></button>`;
+    }).join("") : `<div class="empty">No file matching “${esc(mention.query)}” in ${esc(project.code.name)}</div>`;
+    mentionPop.classList.remove("hidden");
+    const on = mentionPop.querySelector(".on"); if (on) on.scrollIntoView({ block: "nearest" });
+  }
+  function pickMention(i) {
+    const it = mention && mention.items[i]; if (!it) return;
+    const v = promptEl.value, end = mention.start + 1 + mention.query.length, ins = "@" + it.path + (it.dir ? "" : " ");
+    promptEl.value = v.slice(0, mention.start) + ins + v.slice(end);
+    const caret = mention.start + ins.length; promptEl.focus(); promptEl.setSelectionRange(caret, caret); autosize();
+    mention = null; if (it.dir) showMention(); else hideMention();   // a folder drills down; type a space to reference the whole folder
+  }
+  promptEl.addEventListener("input", showMention);
+  promptEl.addEventListener("click", showMention);
+  promptEl.addEventListener("keyup", e => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) showMention(); });
+  promptEl.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== promptEl) hideMention(); }, 120));
+  mentionPop.addEventListener("pointerdown", e => e.preventDefault());   // keep focus (and the caret) in the prompt
+  mentionPop.addEventListener("click", e => { const b = e.target.closest("button[data-i]"); if (b) pickMention(+b.dataset.i); });
 
   // ------------------------------------------------------------ design system
   const dsDlg = $("#dsDlg");
@@ -865,6 +1110,7 @@
     const sel = $("#providerSel"); sel.innerHTML = Object.keys(cfg.presets).map(k => `<option ${k === cfg.provider ? "selected" : ""}>${k}</option>`).join("");
     form.base_url.value = cfg.base_url || ""; form.model.value = cfg.model || ""; form.api_key.value = "";
     form.temperature.value = cfg.temperature ?? 0.8; form.max_tokens.value = cfg.max_tokens ?? 8192; form.allow_cdn.checked = !!cfg.allow_cdn; form.effort.value = cfg.effort || "medium";
+    form.code_budget.value = Math.round((+cfg.code_budget || 0) / 1000); $("#codeBudgetAuto").textContent = kb(cfg.code_budget_auto || 0);
     $("#keyState").textContent = cfg.api_key_set ? `current: ${cfg.api_key}` : "none set"; $("#modelsMsg").textContent = ""; $("#modelList").innerHTML = "";
     dlg.showModal();
   }
@@ -896,7 +1142,8 @@
   form.addEventListener("submit", async e => {
     e.preventDefault();
     await postConfig({ provider: form.provider.value, base_url: form.base_url.value, model: form.model.value, api_key: form.api_key.value || undefined,
-      temperature: +form.temperature.value, max_tokens: +form.max_tokens.value, allow_cdn: form.allow_cdn.checked, effort: form.effort.value, variants: +$("#variants").value });
+      temperature: +form.temperature.value, max_tokens: +form.max_tokens.value, allow_cdn: form.allow_cdn.checked, effort: form.effort.value, variants: +$("#variants").value,
+      code_budget: Math.max(0, Math.round(+form.code_budget.value || 0)) * 1000 });
     dlg.close(); toast(`Using ${cfg.model} @ ${cfg.base_url}`);
   });
   $("#settingsBtn").addEventListener("click", openSettings);
