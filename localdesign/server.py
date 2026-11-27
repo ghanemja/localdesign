@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, codebase, components, kits, config, designsystem, export, llm, pack, prompts
+from . import __version__, codebase, components, effects, kits, pdimages, style, config, designsystem, export, llm, pack, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -103,9 +103,17 @@ def _code_audit(user: str, info: dict | None) -> dict | None:
     return {"user_prompt": user[:300], "code": info["name"], "code_files": [f["path"] for f in info["files"]], "code_chars": info["chars"]}
 
 
-def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None, assets=None, kind="screen", code=("", None)):
+def _style_extra(sty, text: str, for_spec: bool, compact: bool = False) -> str:
+    """Style profile + (HTML engine, when the style or the request calls for it) the effects vocabulary."""
+    parts = [style.style_prompt(sty, compact)]
+    if not for_spec and style.wants_fx(sty, text):
+        parts.append(effects.prompt_block())
+    return "\n\n".join(p for p in parts if p)
+
+
+def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=None, data=None, assets=None, kind="screen", code=("", None), sty=None):
     for_spec = mode == "spec"
-    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec), prompts.assets_prompt(assets)) if x)
+    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, for_spec), prompts.data_prompt(data, for_spec), prompts.assets_prompt(assets), _style_extra(sty, brief, for_spec or kind == "artifact")) if x)
     verb = "Build this artifact:" if kind == "artifact" else None
     user = prompts.generate_user_prompt(brief, context, verb) + ("\n\n" + extra if extra else "")
     if kind == "artifact":
@@ -118,16 +126,16 @@ def _run_variant(cfg, idx, brief, context, width, direction, q, mode="html", ds=
                      kind="generate" if kind == "screen" else "artifact", audit_extra=_code_audit(user, code[1]))
 
 
-def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None, assets=None, kind="screen", code=("", None)):
+def _run_iterate(cfg, idx, html, instruction, width, q, spec=None, ds=None, data=None, assets=None, kind="screen", code=("", None), sty=None):
     if spec:
         sys_p = prompts.spec_system_prompt(width, None)
-        extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, True), prompts.data_prompt(data, True)) if x)
+        extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, True), prompts.data_prompt(data, True), _style_extra(sty, instruction, True, compact=True)) if x)
         user = prompts.SPEC_ITERATE.format(spec=json.dumps(spec, separators=(",", ":")), instruction=instruction) + ("\n\n" + extra if extra else "")
         _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": code[0] + user}], q, temperature=0.4, kind="iterate", mode="spec", width=width, ds=ds, data=data,
                          audit_extra=_code_audit(user, code[1]))
         return
     sys_p = prompts.artifact_system_prompt(width, cfg.get("allow_cdn", False)) if kind == "artifact" else prompts.system_prompt(width, None, cfg.get("allow_cdn", False))
-    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, False), prompts.assets_prompt(assets)) if x)
+    extra = "\n\n".join(x for x in (prompts.design_system_prompt(ds, False), prompts.assets_prompt(assets), _style_extra(sty, instruction + (" shader" if "data-ld-shader" in html else ""), kind == "artifact", compact=True)) if x)
     user = prompts.ITERATE.format(html=html, instruction=instruction) + ("\n\n" + extra if extra else "")
     _stream_to_queue(cfg, idx, sys_p, [{"role": "user", "content": code[0] + user}], q, temperature=0.4, kind="iterate", audit_extra=_code_audit(user, code[1]))
 
@@ -234,6 +242,26 @@ def fetch_site_css(url: str) -> dict:
     return {"css": "\n".join(css_parts), "html": text, "sheets": sheets, "title": (t.group(1).strip() if t else "")[:80]}
 
 
+def analyze_site(url: str) -> dict:
+    """A site the user likes → palette, fonts and traits (WebGL, motion, ASCII, glass, dark…) for the style profile."""
+    from urllib.parse import urljoin
+    site = fetch_site_css(url)
+    scripts = []
+    for src in re.findall(r"<script[^>]+src=[\"']([^\"']+)", site["html"] or "", re.I)[:6]:
+        full = urljoin(url, src)
+        if urlparse(full).netloc == urlparse(url).netloc and len(scripts) < 2:
+            try:
+                scripts.append(_fetch_url(full, limit=1_500_000)[0].decode("utf-8", "replace"))
+            except ValueError:
+                pass
+    parsed = designsystem.parse(site["css"], "css") if site["css"].strip() else {"tokens": {}, "palette": []}
+    if len(parsed.get("tokens") or {}) < 2 and site["html"]:
+        alt = designsystem.parse(site["html"], "html")
+        if len(alt.get("tokens") or {}) > len(parsed.get("tokens") or {}):
+            parsed = alt
+    return style.analysis(url, site["title"], site["html"], site["css"], "\n".join(scripts), parsed)
+
+
 def _test_call(cfg: dict) -> dict:
     """Tiny round-trip to the configured model: proves endpoint, key and model id work. Used by the settings dialog."""
     if not cfg.get("model"):
@@ -278,7 +306,7 @@ def _spec_partial(text: str, width: int, ds, data) -> str:
         return ""
     if not isinstance(spec, dict) or not spec.get("sections"):
         return ""
-    return components.render(spec, width, ds, data)
+    return effects.inject(components.render(spec, width, ds, data))
 
 
 def _finish(q, idx, buf, warning=None, mode="html", width=1280, ds=None, data=None):
@@ -302,13 +330,13 @@ def _finish(q, idx, buf, warning=None, mode="html", width=1280, ds=None, data=No
         if not isinstance(spec, dict) or not spec.get("sections"):
             q.put({"type": "error", "i": idx, "message": "Spec had no sections:\n" + buf[:600]})
             return
-        ev = {"type": "done", "i": idx, "html": components.render(spec, width, ds, data), "spec": spec, "mode": "spec"}
+        ev = {"type": "done", "i": idx, "html": effects.inject(components.render(spec, width, ds, data)), "spec": spec, "mode": "spec"}
     else:
         html = prompts.extract_html(buf)
         if "<" not in html:
             q.put({"type": "error", "i": idx, "message": (warning + "\n\n" if warning else "") + "Model returned no HTML:\n" + buf[:500]})
             return
-        ev = {"type": "done", "i": idx, "html": html, "mode": "html"}
+        ev = {"type": "done", "i": idx, "html": effects.inject(html), "mode": "html"}
     if warning:
         ev["warning"] = warning
     q.put(ev)
@@ -418,6 +446,21 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"models": llm.list_models(cfg)})
             except llm.LLMError as e:
                 return _json(self, {"error": str(e)}, 502)
+        if u.path == "/api/style/catalog":   # onboarding: directions (with live previews), preferences, where to find inspiration
+            return _json(self, style.catalog())
+        if u.path == "/api/pd/search":   # ?q=&source=all|aic|cma&page= → public-domain images from official open-access APIs
+            qs = {k: v[0] for k, v in parse_qs(u.query).items()}
+            try:
+                return _json(self, pdimages.search(qs.get("q", ""), qs.get("source", "all"), int(qs.get("page") or 0)))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 502)
+        if u.path == "/api/pd/thumb":   # ?u=<museum image URL> → the image, fetched by this server (works where only it may go out)
+            try:
+                data, ctype = pdimages.thumb((parse_qs(u.query).get("u") or [""])[0])
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 404)
+            self.send_response(200); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=86400"); self.end_headers(); self.wfile.write(data); return
         if u.path == "/api/kits":   # installed UI kits + the open-source packs that can be imported
             have = {k["id"] for k in kits.installed()}
             return _json(self, {"installed": kits.installed(), "catalog": [{"id": k, **v, "installed": k in have} for k, v in kits.CATALOG.items()]})
@@ -497,13 +540,15 @@ class Handler(BaseHTTPRequestHandler):
             kind = "artifact" if body.get("kind") == "artifact" else "screen"
             mode = "html" if kind == "artifact" else resolve_mode(cfg, body.get("mode"))
             ds, data, assets = body.get("design_system") or None, body.get("data") or None, body.get("assets") or None
+            sty = body.get("style") if isinstance(body.get("style"), dict) else None
             q: queue.Queue = queue.Queue()
             code = _code_ctx(cfg, body, brief)
             if code[1]:
                 q.put({"type": "context", **code[1]})
             for i in range(n):
-                direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if (n > 1 and kind == "screen") else None
-                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind, code), daemon=True).start()
+                dirs = style.variant_directions(sty) or prompts.DIRECTIONS          # the user's chosen directions, else the generic ones
+                direction = dirs[i % len(dirs)] if (n > 1 and kind == "screen") else None
+                threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind, code, sty), daemon=True).start()
             return _sse_multiplex(self, q, n)
         if u.path == "/api/kits/install":   # {source: catalog id} | {repo: "owner/name", branch?} | {files: [{path, content}], name} | {path: "/abs/folder", name}
             try:
@@ -530,6 +575,40 @@ class Handler(BaseHTTPRequestHandler):
                 if kid == kits.MINE:
                     kid = "mine-import"
                 return _json(self, kits.install(kid, name, files, meta))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
+        if u.path == "/api/style/analyze":   # {url} → title, palette, fonts, traits of a site the user likes (one page + same-origin CSS + 2 scripts)
+            url = str(body.get("url") or "").strip()
+            if not re.match(r"^https?://", url, re.I):
+                url = "https://" + url if url and "." in url else ""
+            if not url:
+                return _json(self, {"error": "enter a site address"}, 400)
+            try:
+                return _json(self, analyze_site(url))
+            except ValueError as e:   # keep it as a plain link; say why (e.g. Shadertoy's bot protection)
+                host = urlparse(url).hostname or url
+                hint = (" Shadertoy blocks automated access: copy the shader's code and paste it under Library → UI kits → Shader backgrounds."
+                        if "shadertoy" in host else " It is kept as a link; add a note about what you like.")
+                return _json(self, {"url": url, "title": host, "palette": [], "fonts": [], "traits": [], "tokens": {}, "image": "", "error": str(e) + "." + hint})
+        if u.path == "/api/pd/import":   # {project, url, title?, artist?, date?, source?, license?, page?} → a project asset with its credit line
+            pid = str(body.get("project") or "")
+            if not SAFE_ID.match(pid):
+                return _json(self, {"error": "bad project id"}, 400)
+            try:
+                raw, ctype = pdimages.download(str(body.get("url") or ""))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
+            title = str(body.get("title") or "").strip() or Path(urlparse(str(body.get("url"))).path).stem or "image"
+            credit = "; ".join(x for x in [f"“{title}”" + (f" — {body.get('artist')}" if body.get("artist") else "") + (f", {body.get('date')}" if body.get("date") else ""),
+                                            str(body.get("license") or "public domain"), str(body.get("source") or urlparse(str(body.get("url"))).hostname or ""), str(body.get("page") or "")] if x)
+            stem = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-")[:50] or "image"
+            fname = f"{stem}-{uuid.uuid4().hex[:6]}{ASSET_TYPES[ctype]}"
+            d = config.ASSETS_DIR / pid; d.mkdir(parents=True, exist_ok=True)
+            (d / fname).write_bytes(raw)
+            return _json(self, {"url": f"/assets/{pid}/{fname}", "name": stem, "type": ctype, "size": len(raw), "note": credit[:300]})
+        if u.path == "/api/kits/shader":   # a pasted (e.g. Shadertoy) shader → My components: {name, glsl, author?, url?, license?}
+            try:
+                return _json(self, kits.add_shader(str(body.get("name") or ""), str(body.get("glsl") or ""), str(body.get("author") or ""), str(body.get("url") or ""), str(body.get("license") or "")))
             except ValueError as e:
                 return _json(self, {"error": str(e)}, 400)
         if u.path == "/api/kits/mine":   # "Save to library" from the canvas: {name, html, category?}
@@ -681,6 +760,9 @@ class Handler(BaseHTTPRequestHandler):
             ds_extra = prompts.design_system_prompt(body.get("design_system") or None, False)
             if ds_extra:
                 user += "\n\n" + ds_extra
+            sx = _style_extra(body.get("style") if isinstance(body.get("style"), dict) else None, instruction, False, compact=True)
+            if sx:
+                user += "\n\n" + sx
             code_block, code_info = _code_ctx(cfg, body, instruction)
             if code_info:
                 q.put({"type": "context", **code_info})
@@ -715,7 +797,7 @@ class Handler(BaseHTTPRequestHandler):
             spec = body.get("spec")
             if not isinstance(spec, dict):
                 return _json(self, {"error": "need spec"}, 400)
-            return _json(self, {"html": components.render(spec, int(body.get("width") or 1280), body.get("design_system") or None, body.get("data") or None)})
+            return _json(self, {"html": effects.inject(components.render(spec, int(body.get("width") or 1280), body.get("design_system") or None, body.get("data") or None))})
         if u.path == "/api/iterate":
             html, instruction = body.get("html") or "", (body.get("instruction") or "").strip()
             if not html or not instruction:
@@ -727,7 +809,7 @@ class Handler(BaseHTTPRequestHandler):
             code = _code_ctx(cfg, body, instruction)
             if code[1]:
                 q.put({"type": "context", **code[1]})
-            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None, body.get("assets") or None, "artifact" if body.get("kind") == "artifact" else "screen", code), daemon=True).start()
+            threading.Thread(target=_run_iterate, args=(cfg, 0, html, instruction, width, q, body.get("spec") or None, body.get("design_system") or None, body.get("data") or None, body.get("assets") or None, "artifact" if body.get("kind") == "artifact" else "screen", code, body.get("style") if isinstance(body.get("style"), dict) else None), daemon=True).start()
             return _sse_multiplex(self, q, 1)
         if u.path == "/api/projects":
             pid = body.get("id") or uuid.uuid4().hex[:10]

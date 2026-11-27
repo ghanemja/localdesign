@@ -29,6 +29,7 @@
       <button id="zoomLabel" title="Reset zoom">100%</button>
       <button id="zoomIn" title="Zoom in (⌘+)">+</button>
     </div>
+    <button class="ghost" id="styleBtn" title="Style: directions, sites you like and preferences that steer every generation">◎ <span id="styleLabel">Style</span></button>
     <button class="ghost" id="dsBtn" title="Design system: tokens and components the model must use">◫ <span id="dsLabel">Design system</span></button>
     <button class="ghost" id="dataBtn" title="Real data sources for the screens">⊞ <span id="dataLabel">Data</span></button>
     <button class="ghost" id="flowBtn" title="Plan a whole flow (journey or PRD → linked screens)">⇶ Flow</button>
@@ -56,7 +57,7 @@
 
 <aside id="library" class="hidden">
   <div class="libhead">
-    <div class="seg small"><button data-tab="components" class="on">Components</button><button data-tab="kits" title="Open-source and your own UI element collections: buttons, loaders, toggles, cards… many animated">UI kits</button><button data-tab="assets">My assets</button></div>
+    <div class="seg small"><button data-tab="components" class="on">Components</button><button data-tab="kits" title="Open-source and your own UI element collections: buttons, loaders, toggles, cards, shader backgrounds, ASCII effects… many animated">UI kits</button><button data-tab="pd" title="Public-domain artwork from museum open-access collections">Public domain</button><button data-tab="assets">My assets</button></div>
     <span class="grow"></span>
     <button class="ic" id="libClose" title="Close">×</button>
   </div>
@@ -69,6 +70,7 @@
       <select id="kitCat" title="Category"></select>
       <button type="button" class="ghost ic" id="kitBg" title="Preview on a dark background">◐</button>
       <button type="button" class="ghost" id="kitAddBtn" title="Import an open-source pack or your own kit">+ Add kit</button>
+      <button type="button" class="ghost" id="shaderPasteBtn" title="Paste a fragment shader you like (e.g. from Shadertoy) and use it as a background">✎ Paste a shader</button>
     </div>
     <p class="muted small libhint"><b>Hover</b> a preview to see it animate · <b>drag</b> it onto a screen, or select a screen and click <b>＋</b> · <b>★</b> adds it to your design system so generated screens reuse it.</p>
     <div id="kitGrid" class="libgrid kitgrid"></div>
@@ -83,6 +85,18 @@
       <p class="muted small">Elements you save from a screen (select it, then <b>⊕</b> in its toolbar) go into <b>My components</b>.</p>
       <p id="kitMsg" class="small"></p>
     </div>
+  </div>
+  <div id="libPD" class="hidden">
+    <div class="kitbar">
+      <input id="pdQ" type="search" placeholder="Search public-domain art — e.g. fern engraving, botanical, map, moth">
+      <select id="pdSrc"><option value="all">All sources</option><option value="aic">Art Institute of Chicago</option><option value="cma">Cleveland Museum of Art</option></select>
+    </div>
+    <p class="muted small libhint">Out-of-copyright artwork from museum open-access collections (public domain / CC0). <b>＋</b> adds it to your assets (with its credit line) and drops it on the selected screen; generated screens can use it too.</p>
+    <div id="pdGrid" class="pdgrid"></div>
+    <div id="pdMore" class="muted small"></div>
+    <h3 class="small">Import by address <span class="muted">— e.g. an image you chose on <a href="https://pdimagearchive.org/" target="_blank" rel="noopener">pdimagearchive.org ↗</a></span></h3>
+    <div class="inline pdurl"><input id="pdUrl" placeholder="https://images.pdimagearchive.org/…jpg (the image's own address)"><input id="pdTitle" placeholder="title / credit"><button type="button" class="ghost" id="pdImport">Import</button></div>
+    <p id="pdMsg" class="small"></p>
   </div>
   <div id="libAssets" class="hidden">
     <div class="row">
@@ -228,6 +242,44 @@
     <button type="button" class="ghost" id="dsCancel">Cancel</button>
     <button type="button" id="dsSave">Save &amp; re-render spec screens</button>
   </menu>
+</dialog>
+
+<!-- Style onboarding -->
+<dialog id="styleDlg" class="wide xwide">
+  <h2>◎ What should this project feel like? <span class="muted small">— optional, change it any time</span></h2>
+  <h3>1 · Pick up to three directions <span class="muted small">— variants A, B, C each take one; one screen blends them</span></h3>
+  <div id="styleDirs" class="stylegrid"></div>
+  <h3>2 · Sites and references you like</h3>
+  <div class="inline"><input id="styleUrl" placeholder="Paste a site you like — e.g. motionsites.ai, ascii-magic.com/app, pdimagearchive.org"><button type="button" class="ghost" id="styleAdd">Add</button></div>
+  <p id="styleRefMsg" class="muted small"></p>
+  <div id="styleRefs"></div>
+  <details class="inspo"><summary>Looking for inspiration?</summary><div id="styleInspo"></div></details>
+  <h3>3 · Preferences</h3>
+  <div id="stylePrefs" class="prefs"></div>
+  <label>Anything else <span class="muted small">(tone, audience, must-haves, things to avoid)</span><textarea id="styleNotes" rows="2" placeholder="Calm and clinical, not playful. Large tap targets. Never use stock-photo people."></textarea></label>
+  <menu>
+    <span class="muted small">Steers every generation: the model gets your directions, preferences and what the sites you like have in common (palette, type, traits) — never their content.</span>
+    <span class="grow"></span>
+    <button type="button" class="ghost" id="styleSkip">Skip</button>
+    <button type="button" id="styleSave">Use this style</button>
+  </menu>
+</dialog>
+
+<!-- Paste a shader -->
+<dialog id="shaderDlg" class="wide">
+  <h2>✎ Paste a shader <span class="muted small">— e.g. from Shadertoy (single-pass Image tab)</span></h2>
+  <div class="two">
+    <label>Name <input id="shName" placeholder="Rainforest"></label>
+    <label>Author <input id="shAuthor" placeholder="the shader's author"></label>
+  </div>
+  <div class="two">
+    <label>Source URL <input id="shUrl" placeholder="https://www.shadertoy.com/view/…"></label>
+    <label>License <input id="shLicense" placeholder="detected from the code"></label>
+  </div>
+  <label>Code <span class="muted small">— needs <code>void mainImage(out vec4 fragColor, in vec2 fragCoord)</code>; iTime, iResolution, iMouse, iFrame, iDate work; iChannel textures don't</span><textarea id="shCode" rows="9" spellcheck="false" placeholder="void mainImage(out vec4 fragColor, in vec2 fragCoord) { … }"></textarea></label>
+  <div class="shprev"><iframe id="shPrev" sandbox="allow-scripts" title="Shader preview"></iframe></div>
+  <p id="shMsg" class="small"></p>
+  <menu><span class="muted small">Shadertoy shaders are licensed CC BY-NC-SA 3.0 (non-commercial) unless the author says otherwise — check before shipping.</span><span class="grow"></span><button type="button" class="ghost" id="shCancel">Cancel</button><button type="button" id="shSave">Save to My components</button></menu>
 </dialog>
 
 <!-- Code context -->

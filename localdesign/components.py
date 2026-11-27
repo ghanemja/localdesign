@@ -54,6 +54,7 @@ calendar {month, highlight:[days]}
 tabbar {items:[{icon, label, link}], active}                        # mobile bottom bar
 divider {}
 footer {text, links:[..]}
+effect {effect:"aurora|mesh|plasma|waves|clouds|stars|halftone|ripple|sunset|liquid|grid|topo" or ascii:"field|wave|orb|rain", colors:[3 hex], title, sub, actions:[..], height:int}   # animated background hero (use only when the style asks for it)
 Icons: use an emoji or a short word; link: title of another screen this element navigates to."""
 
 EXAMPLE_SPEC = {
@@ -664,11 +665,28 @@ def r_footer(n, ctx):
     return f'<footer class="ld-foot"><span>{e(n.get("text"))}</span><nav>{links}</nav></footer>'
 
 
+def r_effect(n, ctx):
+    """Animated shader / ASCII hero: the effects runtime (effects.inject) renders it."""
+    h = _px(n.get("height"), 320)
+    cols = n.get("colors") if isinstance(n.get("colors"), list) else []
+    hexes = ",".join(c for c in (_color(c, "") for c in cols[:3]) if c)
+    title = '<h1 style="margin:0 0 10px;font-size:var(--fs-hero)">' + e(n.get("title")) + "</h1>" if n.get("title") else ""
+    sub = '<p style="margin:0 0 18px;opacity:.85;font-size:var(--fs-lg)">' + e(n.get("sub")) + "</p>" if n.get("sub") else ""
+    inner = '<div style="text-align:center;max-width:720px">' + title + sub + _btns(n.get("actions") or []) + "</div>"
+    style = f"min-height:{h}px;display:grid;place-items:center;padding:var(--pad);border-radius:var(--r);overflow:hidden;color:#fff"
+    if n.get("ascii"):
+        return f'<section class="ld-effect" data-ld-ascii="{e(n.get("ascii"))}" style="{style};background:#0a0a0a;color:var(--primary)">{inner}</section>'
+    colors_attr = f' data-ld-colors="{hexes}"' if hexes else ""
+    return f'<section class="ld-effect" data-ld-shader="{e(n.get("effect") or "mesh")}"{colors_attr} style="{style}">{inner}</section>'
+
+
+
 NODES = {
     "heading": r_heading, "stats": r_stats, "grid": r_grid, "split": r_split, "card": r_card, "text": r_text, "table": r_table,
     "list": r_list, "chart": r_chart, "form": r_form, "buttons": r_buttons, "tabs": r_tabs, "chips": r_chips, "steps": r_steps,
     "pricing": r_pricing, "hero": r_hero, "features": r_features, "image": r_image, "timeline": r_timeline, "chat": r_chat,
     "kv": r_kv, "settings": r_settings, "progress": r_progress, "alert": r_alert, "search": r_search, "breadcrumbs": r_breadcrumbs,
+    "effect": r_effect, "shader": r_effect, "background": r_effect,
     "avatars": r_avatars, "calendar": r_calendar, "tabbar": r_tabbar, "divider": r_divider, "footer": r_footer,
     # aliases small models like to use
     "header": r_heading, "title": r_heading, "kpis": r_stats, "metrics": r_stats, "cards": r_grid, "row": r_split, "columns": r_grid,

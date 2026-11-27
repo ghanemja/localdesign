@@ -108,7 +108,13 @@
     const over = pick(x, y) || document.body; const t = document.createElement("template"); t.innerHTML = html.trim();
     const nodes = [...t.content.children]; if (!nodes.length) return;
     for (const n of nodes) { if (n.tagName === "STYLE" && n.hasAttribute("data-ld-lib")) { const key = n.getAttribute("data-ld-lib"); if (document.querySelector(`style[data-ld-lib="${key}"]`)) n.remove(); else document.head.appendChild(n); } }
-    const els = nodes.filter(n => n.isConnected === false && n.tagName !== "STYLE"); const first = els[0]; if (!first) { changed("drop"); return; }
+    for (const n of nodes) {   /* shared runtimes (e.g. effects): once per page, and recreated so the browser runs them now */
+      if (n.tagName !== "SCRIPT" || !n.hasAttribute("data-ld-lib")) continue;
+      const key = n.getAttribute("data-ld-lib"); n.remove();
+      if (document.querySelector(`script[data-ld-lib="${key}"]`)) continue;
+      const sc = document.createElement("script"); for (const a of n.attributes) sc.setAttribute(a.name, a.value); sc.textContent = n.textContent; document.body.appendChild(sc);
+    }
+    const els = nodes.filter(n => n.isConnected === false && n.tagName !== "STYLE" && n.tagName !== "SCRIPT"); const first = els[0]; if (!first) { changed("drop"); return; }
     if (over === document.body) els.forEach(n => document.body.appendChild(n)); else { const r = over.getBoundingClientRect(); const after = y > r.top + r.height / 2; let ref = over; for (const n of els) { after ? ref.after(n) : ref.before(n); if (after) ref = n; } }
     select(first); changed("drop");
   }

@@ -7,7 +7,7 @@
   const frameH = (s) => s.kind === "artifact" ? (s.width >= 1280 ? 880 : HEIGHTS[s.width]) : HEIGHTS[s.width];
 
   // ------------------------------------------------------------ state
-  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {}, assets: [], code: null });
+  const blankProject = () => ({ id: null, name: "Untitled", device: 1280, screens: [], camera: { x: 80, y: 60, z: 1 }, designSystem: null, data: {}, assets: [], code: null, style: null });
   let project = blankProject();
   let selected = null;           // screen id
   let cfg = {};
@@ -164,7 +164,7 @@
     emptyEl.classList.toggle("hidden", project.screens.length > 0);
     $("#projectName").value = project.name;
     $$("#deviceSeg button").forEach(b => b.classList.toggle("on", +b.dataset.w === project.device));
-    dsIndicator(); drawArrows();
+    dsIndicator(); styleIndicator(); drawArrows();
     applyCamera();
   }
   function select(id) {
@@ -218,7 +218,7 @@
   // ------------------------------------------------------------ generate / iterate
   let genKind = "screen";
   $$("#kindSeg button").forEach(b => b.addEventListener("click", () => { genKind = b.dataset.kind; $$("#kindSeg button").forEach(x => x.classList.toggle("on", x === b)); if (genKind === "artifact") { $("#variants").value = "1"; } promptEl.placeholder = genKind === "artifact" ? "Describe an app, tool, chart, game or document to build…" : "Describe a screen to design…"; }));
-  const genExtras = () => ({ mode: $("#engine").value, kind: genKind, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined, assets: (project.assets || []).length ? project.assets : undefined, code: codeRef() });
+  const genExtras = () => ({ mode: $("#engine").value, kind: genKind, design_system: project.designSystem || undefined, data: Object.keys(project.data || {}).length ? project.data : undefined, assets: (project.assets || []).length ? project.assets : undefined, code: codeRef(), style: project.style || undefined });
   let progTimer = null, progStart = 0, progBytes = {}, ctxNote = "";
   const LOCAL = ["ollama", "lmstudio", "llamacpp", "vllm", "custom"];
   function setLoading(s, on) {
@@ -517,7 +517,7 @@
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   $("#projectsBtn").addEventListener("click", showProjects);
   $("#projectsClose").addEventListener("click", () => $("#projects").close());
-  $("#newProject").addEventListener("click", () => { newProject(); $("#projects").close(); });
+  $("#newProject").addEventListener("click", () => { newProject(); $("#projects").close(); if (cfg.model) openStyle(); });
   $("#importBtn").addEventListener("click", () => $("#importFile").click());
   $("#importFile").addEventListener("change", async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -601,7 +601,7 @@
     const root = (css.match(/:root\s*\{[^}]*\}/g) || []).join("\n");
     aborter = new AbortController(); setBusy(true, "Changing element");
     try {
-      await streamPost("/api/iterate-element", { html: info.html, css: root || css.slice(0, 3000), instruction, width: s.width, design_system: project.designSystem || undefined, code: codeRef() }, ev => {
+      await streamPost("/api/iterate-element", { html: info.html, css: root || css.slice(0, 3000), instruction, width: s.width, design_system: project.designSystem || undefined, code: codeRef(), style: project.style || undefined }, ev => {
         if (ev.type === "context") noteContext(ev);
         else if (ev.type === "status") { $(".prog", el).dataset.phase = ev.status; }
         else if (ev.type === "partial") progBytes[s.id] = ev.chars || 0;
@@ -742,14 +742,15 @@
 
   // ------------------------------------------------------------ library panel (components + assets)
   const lib = $("#library"); let libLoaded = false, libStyleTag = "";
-  function showLib(on) { lib.classList.toggle("hidden", !on); viewport.classList.toggle("withlib", on); if (on && !libLoaded) loadLibrary(); if (on) renderAssets(); if (!on) document.body.classList.remove("libwide"); else if (!$("#libKits").classList.contains("hidden")) document.body.classList.add("libwide"); }
+  function showLib(on) { lib.classList.toggle("hidden", !on); viewport.classList.toggle("withlib", on); if (on && !libLoaded) loadLibrary(); if (on) renderAssets(); if (!on) document.body.classList.remove("libwide"); else if (!$("#libKits").classList.contains("hidden") || !$("#libPD").classList.contains("hidden")) document.body.classList.add("libwide"); }
   $("#libBtn").addEventListener("click", () => showLib(lib.classList.contains("hidden")));
   $("#libClose").addEventListener("click", () => showLib(false));
   $$("#library [data-tab]").forEach(b => b.addEventListener("click", () => {
     const tab = b.dataset.tab; $$("#library [data-tab]").forEach(x => x.classList.toggle("on", x === b));
-    $("#libComponents").classList.toggle("hidden", tab !== "components"); $("#libAssets").classList.toggle("hidden", tab !== "assets"); $("#libKits").classList.toggle("hidden", tab !== "kits");
-    $("#library > .libhint").classList.toggle("hidden", tab === "kits"); document.body.classList.toggle("libwide", tab === "kits");
+    $("#libComponents").classList.toggle("hidden", tab !== "components"); $("#libAssets").classList.toggle("hidden", tab !== "assets"); $("#libKits").classList.toggle("hidden", tab !== "kits"); $("#libPD").classList.toggle("hidden", tab !== "pd");
+    $("#library > .libhint").classList.toggle("hidden", tab === "kits" || tab === "pd"); document.body.classList.toggle("libwide", tab === "kits" || tab === "pd");
     if (tab === "kits" && !kitsLoaded) loadKits();
+    if (tab === "pd" && !pdState.loaded) pdSearch(true);
   }));
   async function loadLibrary() {
     const r = await fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ design_system: project.designSystem || undefined }) });
@@ -782,7 +783,10 @@
     if (!assets.length) grid.innerHTML = "<div class='muted small'>No assets yet. Upload your logo, icons, product shots.</div>";
     for (const a of assets) {
       const card = document.createElement("div"); card.className = "libitem";
-      card.innerHTML = `<div class="thumb"><img src="${esc(a.url)}" alt=""></div><div class="lbl">${esc(a.name)}<button class="ic del" title="Remove">×</button></div>`;
+      card.innerHTML = `<div class="thumb"><img src="${esc(a.url)}" alt=""></div><div class="lbl">${esc(a.name)}<button class="ic asc" title="Turn into ASCII art (inserted into the selected screen)">⌗</button><button class="ic del" title="Remove">×</button></div>`;
+      card.title = a.note || a.name;
+      card.querySelector(".asc").addEventListener("pointerdown", e => e.stopPropagation());
+      card.querySelector(".asc").addEventListener("click", e => { e.stopPropagation(); asciiFromAsset(a); });
       card.querySelector(".del").addEventListener("pointerdown", e => e.stopPropagation());
       card.querySelector(".del").addEventListener("click", async e => { e.stopPropagation(); await fetch(a.url, { method: "DELETE" }); project.assets = project.assets.filter(x => x !== a); renderAssets(); scheduleSave(); });
       const img = card.querySelector("img"); img.addEventListener("load", () => { a.w = img.naturalWidth; a.h = img.naturalHeight; });
@@ -825,7 +829,7 @@ addEventListener("mouseup",e=>{if(d&&d.on)P({t:"end",x:e.clientX,y:e.clientY});d
 const fit=()=>{const w=document.getElementById("w");if(!w||w.dataset.fill)return;const s=Math.min(1,(innerWidth-14)/Math.max(1,w.scrollWidth),(innerHeight-14)/Math.max(1,w.scrollHeight));w.style.transform="scale("+s+")"};
 addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
   function kitPreviewDoc(it) {
-    const dark = kitState.dark, fill = it.category === "Patterns";
+    const dark = kitState.dark, fill = ["Patterns", "Shaders", "ASCII"].includes(it.category);
     return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}body{display:grid;place-items:center;overflow:hidden;background:${dark ? "#18181b" : "#f4f4f5"};color:${dark ? "#eee" : "#111"};font-family:system-ui,sans-serif}#w{display:inline-block;transform-origin:center}#w[data-fill]{position:fixed;inset:0}</style>`
       + `<style>${it.shared_css || ""}\n${it.css || ""}</style></head><body><div id="w"${fill ? " data-fill=1" : ""}>${it.html}</div>${KIT_PREVIEW_JS}</body></html>`;
   }
@@ -842,7 +846,8 @@ addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
     if (!d.installed.some(k => k.id === kitState.kit)) kitState.kit = "";
     $("#kitSel").value = kitState.kit; $("#kitQ").placeholder = total ? `Search ${total.toLocaleString()} elements — e.g. glow button, toggle, loader` : "Add a kit to start browsing";
     kitCats(); renderKitCatalog();
-    $("#kitCatalog").classList.toggle("hidden", !!d.installed.length && !kitState.catalogOpen);
+    const downloaded = d.installed.some(k => !k.builtin);
+    $("#kitCatalog").classList.toggle("hidden", downloaded && !kitState.catalogOpen); $("#kitCatalog").classList.toggle("top", !downloaded);
     await kitSearch(true);
   }
   function kitCats() {
@@ -865,14 +870,14 @@ addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
     finally { if (seq === kitState.seq) kitState.busy = false; }
   }
   function kitCard(it) {
-    const card = document.createElement("div"); card.className = "libitem kit"; card.title = `${it.name}${it.author ? " by " + it.author : ""} · ${it.category} · ${it.kit_name}`;
+    const card = document.createElement("div"); card.className = "libitem kit"; card.title = `${it.name}${it.author ? " by " + it.author : ""} · ${it.category} · ${it.kit_name}${it.license && it.fx && it.kit === "mine" ? " · " + it.license : ""}${it.uses_channels ? " · uses iChannel textures (render black)" : ""}`;
     card.innerHTML = `<div class="thumb"><iframe sandbox="allow-scripts" loading="lazy" title="${esc(it.name)}"></iframe></div><div class="lbl"><span class="nm">${esc(it.name)}</span><span class="by">${it.author ? "· " + esc(it.author) : ""}</span>`
-      + `<button class="ic ins" title="Insert into the selected screen">＋</button><button class="ic star" title="Add to the design system: generated screens (HTML engine) reuse this exact markup">★</button>`
+      + `<button class="ic ins" title="Insert into the selected screen">＋</button>${it.fx ? "" : `<button class="ic star" title="Add to the design system: generated screens (HTML engine) reuse this exact markup">★</button>`}`
       + (it.kit === "mine" ? `<button class="ic del" title="Remove from My components">×</button>` : it.repo ? `<button class="ic src" title="Source: github.com/${esc(it.repo)} · ${esc(it.license)}">ⓘ</button>` : "") + `</div>`;
     const f = card.querySelector("iframe"); f.srcdoc = kitPreviewDoc(it);
     f.addEventListener("load", () => { if (f.contentWindow) kitPreviews.set(f.contentWindow, { it, frame: f }); });
     card.querySelector(".ins").addEventListener("click", e => { e.stopPropagation(); insertIntoSelected(kitInsertHTML(it), it.name); });
-    card.querySelector(".star").addEventListener("click", e => { e.stopPropagation(); kitToDS(it); });
+    const star = card.querySelector(".star"); if (star) star.addEventListener("click", e => { e.stopPropagation(); kitToDS(it); });
     const src = card.querySelector(".src"); if (src) src.addEventListener("click", e => { e.stopPropagation(); window.open(`https://github.com/${it.repo}`, "_blank", "noopener"); });
     const del = card.querySelector(".del"); if (del) del.addEventListener("click", async e => { e.stopPropagation(); await fetch(`/api/kits/mine/items/${it.id}`, { method: "DELETE" }); card.remove(); loadKits(); });
     wireLibDrag(card.querySelector(".lbl"), () => kitInsertHTML(it), it.name);   // the label strip drags/inserts; the preview drags via its own script
@@ -895,6 +900,87 @@ addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
     ds.css = [ds.css || "", add].filter(Boolean).join("\n");
     dsIndicator(); scheduleSave(); libLoaded = false;
     toast(`★ ${it.name} added to the design system (${ds.components.length} component${ds.components.length === 1 ? "" : "s"}). HTML-engine screens will reuse its markup; it is also under My assets → Brand snippets.`, 6000);
+  }
+
+  // paste a shader (e.g. from Shadertoy): live preview, compile errors, license kept with it
+  let shTimer;
+  $("#shaderPasteBtn").addEventListener("click", async () => { await styleCatalog().catch(() => {}); $("#shMsg").textContent = ""; $("#shaderDlg").showModal(); shPreview(); });
+  $("#shCode").addEventListener("input", () => { clearTimeout(shTimer); shTimer = setTimeout(shPreview, 400); });
+  function shPreview() {
+    const code = $("#shCode").value;
+    if (!/mainImage/.test(code)) { $("#shPrev").srcdoc = ""; $("#shMsg").textContent = code.trim() ? "Needs a mainImage(out vec4 fragColor, in vec2 fragCoord) function — Shadertoy's Image tab." : ""; return; }
+    $("#shPrev").srcdoc = `<!doctype html><html><body style="margin:0;height:100vh"><section data-ld-shader="custom" data-ld-debug style="height:100vh"><script type="x-shader/x-fragment">${code.replace(/<\/script/gi, "<\\/script")}<\/script></section>${(styleCat && styleCat.fx_runtime) || ""}</body></html>`;
+    const lic = /\bMIT\b/i.test(code) ? "MIT" : /cc0|public domain|unlicense/i.test(code) ? "Public domain / CC0" : /creative commons|cc[- ]by/i.test(code) ? "Creative Commons (see the code's comment)" : "";
+    if (!$("#shLicense").value && lic) $("#shLicense").placeholder = "detected: " + lic;
+    $("#shMsg").textContent = /\biChannel\d/.test(code) ? "⚠ Uses iChannel textures or buffers — those render black here (single-pass shaders only)." : "";
+  }
+  $("#shCancel").addEventListener("click", () => $("#shaderDlg").close());
+  $("#shSave").addEventListener("click", async () => {
+    const body = { name: $("#shName").value.trim() || "My shader", glsl: $("#shCode").value, author: $("#shAuthor").value.trim(), url: $("#shUrl").value.trim(), license: $("#shLicense").value.trim() };
+    const r = await fetch("/api/kits/shader", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json(); if (d.error) { $("#shMsg").textContent = "✗ " + d.error; return; }
+    $("#shaderDlg").close(); ["shName", "shAuthor", "shUrl", "shLicense", "shCode"].forEach(id => { $("#" + id).value = ""; });
+    toast(`✎ Saved “${d.name}” to My components (${d.license}). Drag it onto a screen as a background.`, 7000);
+    kitState.kit = "mine"; kitState.cat = ""; kitState.q = ""; $("#kitQ").value = ""; loadKits();
+  });
+
+  // ------------------------------------------------------------ public-domain imagery (museum open-access APIs) + import by URL
+  const pdState = { q: "", src: "all", page: 0, busy: false, done: false, loaded: false, seq: 0 };
+  async function pdSearch(reset) {
+    if (reset) { pdState.page = 0; pdState.done = false; pdState.seq++; pdState.busy = false; $("#pdGrid").innerHTML = ""; }
+    if (pdState.busy || pdState.done) return;
+    pdState.busy = true; pdState.loaded = true; const seq = pdState.seq;
+    $("#pdMore").textContent = "Searching…";
+    try {
+      const r = await fetch(`/api/pd/search?${new URLSearchParams({ q: pdState.q || "botanical illustration", source: pdState.src, page: pdState.page })}`);
+      const d = await r.json(); if (seq !== pdState.seq) return; if (d.error) throw new Error(d.error);
+      for (const it of d.items) $("#pdGrid").appendChild(pdCard(it));
+      pdState.page++; pdState.done = !d.items.length;
+      $("#pdMore").textContent = d.items.length ? `${$("#pdGrid").children.length} of ${d.total.toLocaleString()} public-domain works — scroll for more` + (d.errors.length ? ` (${d.errors.join("; ")})` : "") : $("#pdGrid").children.length ? "That's all." : "Nothing found — try another word.";
+    } catch (e) { $("#pdMore").textContent = "✗ " + e.message; }
+    finally { if (seq === pdState.seq) pdState.busy = false; }
+  }
+  function pdCard(it) {
+    const el = document.createElement("div"); el.className = "pditem"; el.title = `${it.title}${it.artist ? " — " + it.artist : ""}${it.date ? ", " + it.date : ""} · ${it.license}`;
+    el.innerHTML = `<img loading="lazy" alt="${esc(it.title)}" referrerpolicy="no-referrer"><button type="button" class="add" title="Add to assets and drop on the selected screen">＋</button><div class="cap">${esc(it.title)}<div class="m">${esc([it.artist, it.date].filter(Boolean).join(", "))}</div></div>`;
+    el.querySelector("img").src = "/api/pd/thumb?u=" + encodeURIComponent(it.thumb);   // via the server: no direct browser→museum requests
+    el.querySelector(".add").addEventListener("click", () => pdImport({ url: it.full, title: it.title, artist: it.artist, date: it.date, source: { aic: "Art Institute of Chicago", cma: "Cleveland Museum of Art" }[it.source] || it.source, license: it.license, page: it.page }, el.querySelector(".add")));
+    return el;
+  }
+  async function pdImport(meta, btn) {
+    if (!(await ensureProject())) { toast("Could not create the project on the server — is lde still running?"); return; }
+    if (btn) btn.disabled = true; $("#pdMsg").textContent = `Importing “${meta.title || meta.url}”…`;
+    try {
+      const r = await fetch("/api/pd/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: project.id, ...meta }) });
+      const d = await r.json(); if (d.error) throw new Error(d.error);
+      (project.assets ||= []).push({ name: d.name, url: d.url, type: d.type, note: d.note }); renderAssets(); scheduleSave();
+      const s = selected && screenById(selected);
+      if (s && s.html) insertIntoSelected(`<figure style="margin:0"><img src="${d.url}" alt="${esc(meta.title || d.name)}" style="max-width:100%;height:auto;display:block"><figcaption style="font-size:12px;opacity:.7;margin-top:6px">${esc(d.note.split(";")[0])}</figcaption></figure>`, meta.title || d.name);
+      $("#pdMsg").textContent = `✓ Added to My assets${s && s.html ? " and " + s.title : ""} — credit: ${d.note}`;
+      if (btn) btn.textContent = "✓";
+    } catch (e) { $("#pdMsg").textContent = "✗ " + e.message; if (btn) btn.disabled = false; }
+  }
+  let pdTimer;
+  $("#pdQ").addEventListener("input", e => { clearTimeout(pdTimer); pdTimer = setTimeout(() => { pdState.q = e.target.value.trim(); pdSearch(true); }, 350); });
+  $("#pdSrc").addEventListener("change", e => { pdState.src = e.target.value; pdSearch(true); });
+  $("#pdImport").addEventListener("click", () => { const url = $("#pdUrl").value.trim(); if (!url) return; let host = ""; try { host = new URL(url).hostname; } catch { $("#pdMsg").textContent = "✗ Not a URL"; return; }
+    pdImport({ url, title: $("#pdTitle").value.trim(), source: host.replace(/^images\./, ""), license: "public domain (as stated by the source)", page: "" }); });
+  new IntersectionObserver(es => { if (es.some(x => x.isIntersecting) && pdState.loaded && !pdState.done) pdSearch(false); }, { root: lib }).observe($("#pdMore"));
+
+  // image → ASCII art (like ascii-magic.com's image mode; runs locally on the canvas)
+  async function asciiFromAsset(a) {
+    const cols = parseInt(prompt(`Turn “${a.name}” into ASCII art — width in characters:`, "96"), 10); if (!cols) return;
+    const img = new Image(); img.src = a.url;
+    try { await img.decode(); } catch { toast("Could not read that image"); return; }
+    const rows = Math.max(1, Math.round(cols * (img.naturalHeight / Math.max(1, img.naturalWidth)) * 0.5));
+    const c = document.createElement("canvas"); c.width = Math.min(cols, 400); c.height = Math.min(rows, 400); const g = c.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    const px = g.getImageData(0, 0, c.width, c.height).data, ramp = "@%#*+=-:. "; let out = "";
+    for (let y = 0; y < c.height; y++) { for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4, l = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255; out += ramp[Math.min(9, Math.floor(l * 10))]; } out += "\n"; }
+    const html = `<pre class="ascii-art" role="img" aria-label="${esc(a.name)}, as ASCII art" style="font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:0;margin:0;white-space:pre;overflow:hidden">${esc(out)}</pre>`;
+    const s = selected && screenById(selected);
+    if (s && s.html) insertIntoSelected(html, `${a.name} (ASCII)`);
+    else { const r = await fetch("/api/kits/mine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: `${a.name} (ASCII)`, html, category: "ASCII" }) }); const d = await r.json(); toast(d.error || `⌗ Saved “${d.name}” to My components — select a screen to drop it in directly next time`, 5000); if (kitsLoaded) loadKits(); }
   }
   async function saveToMine(html, desc) {
     const name = prompt("Save to your library as:", desc || "component"); if (name === null) return;
@@ -1140,6 +1226,97 @@ addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
   mentionPop.addEventListener("pointerdown", e => e.preventDefault());   // keep focus (and the caret) in the prompt
   mentionPop.addEventListener("click", e => { const b = e.target.closest("button[data-i]"); if (b) pickMention(+b.dataset.i); });
 
+
+  // ------------------------------------------------------------ style: directions, sites you like, preferences (steer every generation)
+  let styleCat = null, styleDraft = null;
+  async function styleCatalog() { if (!styleCat) styleCat = await (await fetch("/api/style/catalog")).json(); return styleCat; }
+  function styleIndicator() {
+    const st = project.style, dirs = (st && st.directions) || [], refs = (st && st.references) || [];
+    const name = id => ((styleCat && styleCat.directions.find(x => x.id === id)) || { name: id }).name;
+    $("#styleBtn").classList.toggle("on", !!(dirs.length || refs.length));
+    $("#styleLabel").textContent = dirs.length ? dirs.map(name).join(" · ") : refs.length ? `Style (${refs.length} site${refs.length > 1 ? "s" : ""})` : "Style";
+    $("#styleBtn").title = (dirs.length || refs.length ? `Style: ${[dirs.map(name).join(" · "), refs.length ? refs.length + " site(s) you like" : ""].filter(Boolean).join(" — ")}. ` : "") + "Directions, sites you like and preferences that steer every generation";
+  }
+  async function openStyle() {
+    let cat; try { cat = await styleCatalog(); } catch { toast("Could not load the style catalog"); return; }
+    styleDraft = JSON.parse(JSON.stringify(project.style || { directions: [], prefs: {}, references: [], notes: "" }));
+    styleDraft.directions ||= []; styleDraft.prefs ||= {}; styleDraft.references ||= [];
+    const g = $("#styleDirs"); g.innerHTML = "";
+    for (const d of cat.directions) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "stylecard"; b.dataset.id = d.id;
+      b.innerHTML = `<iframe sandbox="allow-scripts" tabindex="-1" title="${esc(d.name)} preview"></iframe><span class="t">${esc(d.name)}</span><span class="b">${esc(d.blurb)}</span><span class="n"></span>`;
+      b.querySelector("iframe").srcdoc = d.preview;
+      b.addEventListener("click", () => { const ds = styleDraft.directions, i = ds.indexOf(d.id); if (i >= 0) ds.splice(i, 1); else { if (ds.length >= 3) ds.shift(); ds.push(d.id); } renderStyleDirs(); });
+      g.appendChild(b);
+    }
+    renderStyleDirs(); renderStyleRefs(); renderStylePrefs(cat);
+    $("#styleNotes").value = styleDraft.notes || ""; $("#styleRefMsg").textContent = ""; $("#styleUrl").value = "";
+    $("#styleInspo").innerHTML = cat.inspiration.map(i => `<div><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.name)} ↗</a> — ${esc(i.hint)}</div>`).join("");
+    $("#styleDlg").showModal();
+  }
+  function renderStyleDirs() { $$("#styleDirs .stylecard").forEach(c => { const i = styleDraft.directions.indexOf(c.dataset.id); c.classList.toggle("on", i >= 0); c.querySelector(".n").textContent = i >= 0 ? "ABC"[i] : ""; }); }
+  function renderStylePrefs(cat) {
+    const box = $("#stylePrefs"); box.innerHTML = "";
+    for (const [k, opts] of Object.entries(cat.prefs)) {
+      const row = document.createElement("div"); row.className = "p";
+      row.innerHTML = `<span>${esc(k)}</span><div class="seg small">${opts.map(o => `<button type="button" data-v="${esc(o)}">${esc(o)}</button>`).join("")}</div>`;
+      const sync = () => row.querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.v === (styleDraft.prefs[k] || "")));
+      row.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { styleDraft.prefs[k] = styleDraft.prefs[k] === b.dataset.v ? "" : b.dataset.v; sync(); }));
+      sync(); box.appendChild(row);
+    }
+  }
+  function renderStyleRefs() {
+    const box = $("#styleRefs"); box.innerHTML = "";
+    styleDraft.references.forEach((r, i) => {
+      const el = document.createElement("div"); el.className = "refcard";
+      el.innerHTML = `<div class="img"></div><div><div class="t">${esc(r.title || r.url)}</div><div class="u">${esc(r.url)}</div>`
+        + `<div class="chips">${(r.palette || []).map(c => `<span class="sw" style="background:${esc(c)}" title="${esc(c)}"></span>`).join("")}${(r.fonts || []).slice(0, 3).map(f => `<span>${esc(f)}</span>`).join("")}${(r.traits || []).map(t => `<span>${esc(t)}</span>`).join("")}</div>`
+        + (r.error ? `<div class="warn">${esc(r.error)}</div>` : "") + `<input placeholder="What do you like about it? (the grainy gradients, the huge serif headline…)" value="${esc(r.note || "")}"></div>`
+        + `<div class="acts">${(r.palette || []).length || (r.fonts || []).length ? `<button type="button" class="ghost" data-a="ds" title="Set the design system's colours and font from this site">Use its colours</button>` : ""}<button type="button" class="ghost" data-a="rm">Remove</button></div>`;
+      if (r.image && /^https?:/.test(r.image)) el.querySelector(".img").style.backgroundImage = `url("${r.image.replace(/["\\\n]/g, "")}")`;
+      el.querySelector("input").addEventListener("input", e => { r.note = e.target.value; });
+      el.querySelector('[data-a="rm"]').addEventListener("click", () => { styleDraft.references.splice(i, 1); renderStyleRefs(); });
+      const ds = el.querySelector('[data-a="ds"]'); if (ds) ds.addEventListener("click", () => refToDS(r));
+      box.appendChild(el);
+    });
+  }
+  async function addStyleRef() {
+    const url = $("#styleUrl").value.trim(); if (!url) return;
+    const norm = u => u.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (styleDraft.references.some(r => norm(r.url) === norm(url))) { $("#styleRefMsg").textContent = "Already added."; return; }
+    $("#styleRefMsg").textContent = `Reading ${url}…`; $("#styleAdd").disabled = true;
+    try {
+      const r = await fetch("/api/style/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+      const d = await r.json(); if (!d.url) throw new Error(d.error || r.statusText);
+      styleDraft.references.push({ url: d.url, title: d.title, palette: d.palette || [], fonts: d.fonts || [], traits: d.traits || [], image: d.image || "", tokens: d.tokens || {}, error: d.error || "", note: "" });
+      $("#styleUrl").value = ""; $("#styleRefMsg").textContent = d.error ? "" : `✓ ${d.title}${(d.traits || []).length ? " — " + d.traits.slice(0, 5).join(", ") : ""}`;
+      renderStyleRefs();
+    } catch (e) { $("#styleRefMsg").textContent = "✗ " + e.message; }
+    finally { $("#styleAdd").disabled = false; }
+  }
+  function refToDS(r) {
+    const ds = project.designSystem || (project.designSystem = { name: "", tokens: {}, components: [], css: "", notes: "", palette: [] });
+    const t = r.tokens || {};
+    ds.tokens = { ...(ds.tokens || {}), ...Object.fromEntries(["primary", "accent", "bg", "surface", "text", "muted", "line", "radius", "font", "theme"].filter(k => t[k] !== undefined && t[k] !== "").map(k => [k, t[k]])) };
+    if (!t.font && r.fonts && r.fonts[0]) ds.tokens.font = `${r.fonts[0]}, system-ui, sans-serif`;
+    if ((r.palette || []).length) ds.palette = r.palette.map((v, i) => ({ name: `${r.title || "ref"} ${i + 1}`, value: v }));
+    let host = r.url; try { host = new URL(r.url).hostname.replace(/^www\./, ""); } catch {}
+    ds.name = ds.name || `From ${host}`;
+    dsIndicator(); scheduleSave(); rerenderSpecScreens();
+    toast(`Design system now uses ${r.title || r.url}'s colours${r.fonts && r.fonts[0] ? " and " + r.fonts[0] : ""} — fine-tune under ◫ Design system`, 5000);
+  }
+  $("#styleAdd").addEventListener("click", addStyleRef);
+  $("#styleUrl").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addStyleRef(); } });
+  $("#styleBtn").addEventListener("click", openStyle);
+  $("#styleSkip").addEventListener("click", () => $("#styleDlg").close());
+  $("#styleSave").addEventListener("click", () => {
+    styleDraft.notes = $("#styleNotes").value.trim();
+    styleDraft.prefs = Object.fromEntries(Object.entries(styleDraft.prefs).filter(([, v]) => v && v !== "auto"));
+    const empty = !styleDraft.directions.length && !styleDraft.references.length && !Object.keys(styleDraft.prefs).length && !styleDraft.notes;
+    project.style = empty ? null : styleDraft; $("#styleDlg").close(); styleIndicator(); scheduleSave();
+    if (!empty) toast(`Style set${styleDraft.directions.length ? ": " + styleDraft.directions.map(id => (styleCat.directions.find(x => x.id === id) || {}).name).join(" · ") : ""}. New screens and changes follow it${styleDraft.directions.length > 1 ? "; variants A, B, C take one direction each" : ""}.`, 6000);
+  });
+
   // ------------------------------------------------------------ design system
   const dsDlg = $("#dsDlg");
   let dsDraft = null;   // working copy while the dialog is open
@@ -1322,10 +1499,15 @@ addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
     if (!(last && await loadProject(last))) renderAll();
     if (qp.get("fit")) setTimeout(fitAll, 400);
     const firstRun = () => { $("#firstRun").classList.remove("hidden"); if (!dlg.open) openSettings(); };
+    styleCatalog().then(styleIndicator).catch(() => {});   // direction names for the ◎ Style button
+    const askStyle = () => {   // a fresh, empty project starts by asking what it should feel like (once per browser session; Skip is fine)
+      if (project.style || project.screens.length || sessionStorage.getItem("ld.style.asked") || dlg.open) return;
+      sessionStorage.setItem("ld.style.asked", "1"); styleCatalog().then(() => { if (!dlg.open && !$("#styleDlg").open) openStyle(); }).catch(() => {});
+    };
     if (!cfg.model) firstRun();
     else if (!cfg.saved) {   // defaults only (Ollama): check it answers before the user types a prompt into a dead endpoint
-      fetch("/api/models").then(r => r.json()).then(d => { if (d.error) { firstRun(); $("#modelsMsg").textContent = d.error; $("#modelDot").className = "dot bad"; $("#settingsBtn").title = d.error; } }).catch(() => {});
-    }
+      fetch("/api/models").then(r => r.json()).then(d => { if (d.error) { firstRun(); $("#modelsMsg").textContent = d.error; $("#modelDot").className = "dot bad"; $("#settingsBtn").title = d.error; } else askStyle(); }).catch(() => {});
+    } else askStyle();
     promptEl.focus();
   })();
 })();

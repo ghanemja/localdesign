@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Start from taste: ◎ Style
+A new project opens by asking what it should feel like (Skip is fine; ◎ Style in the top bar any time): up to three
+**directions** with live previews (Minimal, Bold, Editorial / print, Generative shader, ASCII / terminal, Motion-rich, Dark &
+luminous, Soft, Dense, Brutalist, Retro, Glass) — variants A/B/C each take one; **sites you like** — read into palette, fonts
+and traits (WebGL / shader, 3D, heavy motion, ASCII, glass, serif display, dark…), with your note on what you like and *Use
+its colours* for the design system; **preferences** (theme, motion, density, shape, type, imagery) and notes. Every
+generation, change and element edit gets the profile; the model is told never to copy a reference's content or branding.
+Links to inspiration sources (Shadertoy, MotionSites, kibitz.art, ASCII Magic, Public Domain Image Archive, Godly,
+SiteInspire) — nothing is copied from them.
+
+### Effects, Shadertoy shaders, ASCII, public-domain art
+- 12 original animated shader backgrounds and 4 ASCII animations (UI kits → Shader backgrounds / ASCII effects), usable by
+  the model with one attribute (`data-ld-shader`, `data-ld-ascii`) and by the spec engine (`effect` node); a small runtime is
+  added to pages that use them (pauses off-screen, honours reduced motion, never saved into the HTML).
+- ✎ Paste a shader: single-pass Shadertoy-style shaders run as backgrounds, with live preview, compile errors, and the
+  author/source/license kept with them (Shadertoy's default CC BY-NC-SA 3.0 is flagged as non-commercial).
+- Library → Public domain: search the Art Institute of Chicago and Cleveland Museum of Art open-access collections; ＋ imports
+  the image with its credit line and drops it on the selected screen; import any public-domain image by URL
+  (e.g. from pdimagearchive.org). ⌗ on an asset turns it into ASCII art.
+
 ### UI kits: browse thousands of open-source elements, or your own
 Library → **UI kits** browses element collections with live previews (hover to animate, dark-background toggle), search over
 names/tags/authors, kit and category filters and infinite scroll. **+ Add kit** imports an open-source pack from GitHub once —

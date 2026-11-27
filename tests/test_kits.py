@@ -109,7 +109,7 @@ def test_install_query_delete_and_mine(kithome):
     s = kits.install("uiverse", "Uiverse Galaxy", UIVERSE, {"repo": "uiverse-io/galaxy", "license": "MIT"})
     assert s["count"] == 2 and s["categories"] == {"Buttons": 1, "Loaders": 1} and "items" not in s and "license_text" not in s["source"]
     kits.install("spinkit", "SpinKit", SPINKIT, {"license": "MIT"})
-    assert kits.query()["total"] == 4
+    assert kits.query()["total"] == 4 + 16                     # + the built-in shader (12) and ASCII (4) effects
     r = kits.query(q="glow button")
     assert r["total"] == 1 and r["items"][0]["kit"] == "uiverse" and r["items"][0]["license"] == "MIT"
     assert kits.query("uiverse", category="Loaders")["total"] == 1 and kits.query(category="Loaders")["total"] == 3 and kits.query("spinkit")["items"][0]["shared_css"]
@@ -119,7 +119,7 @@ def test_install_query_delete_and_mine(kithome):
     assert kits.remove_item("mine", mine["id"]) and kits.load("mine")["count"] == 0
     with pytest.raises(ValueError):
         kits.add_mine("x", "no markup")
-    assert kits.delete("spinkit") and kits.query()["total"] == 2 and not kits.delete("spinkit")
+    assert kits.delete("spinkit") and kits.query()["total"] == 2 + 16 and not kits.delete("spinkit") and not kits.delete("fx-shaders")
     with pytest.raises(ValueError):
         kits.install("x", "x", {"a.html": '<button class="flex bg-red-500">x</button>'}, {})
 
