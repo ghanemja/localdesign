@@ -23,7 +23,7 @@ import zipfile
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 
-from . import config
+from . import config, effects
 
 # Open-source packs the app knows how to import. All pure HTML/CSS (work offline once imported), all MIT.
 CATALOG = {
@@ -35,6 +35,17 @@ CATALOG = {
                    "desc": "20 single-element animated dot loaders.", "size": "≈ 300 KB"},
 }
 MINE = "mine"           # the kit "Save to library" writes into
+# Always-available, built-in kits (original effects; not stored on disk, cannot be removed)
+BUILTIN = {"fx-shaders": ("Shader backgrounds", "Shaders"), "fx-ascii": ("ASCII effects", "ASCII")}
+
+
+def _builtin(kit_id: str) -> dict | None:
+    if kit_id not in BUILTIN:
+        return None
+    items = effects.kit_items()[kit_id]
+    name, cat = BUILTIN[kit_id]
+    return {"id": kit_id, "name": name, "source": {"license": "MIT (localdesign originals)"}, "css": "", "builtin": True,
+            "categories": {cat: len(items)}, "skipped": {}, "count": len(items), "items": items}
 MAX_ZIP = 120 * 1024 * 1024
 MAX_TEXT = 60 * 1024 * 1024
 MAX_FILE = 200_000
@@ -486,6 +497,8 @@ def summary(kit: dict) -> dict:
 
 
 def load(kit_id: str) -> dict | None:
+    if kit_id in BUILTIN:
+        return _builtin(kit_id)
     if not _ID.match(kit_id or ""):
         return None
     f = kits_dir() / f"{kit_id}.json"
@@ -507,12 +520,12 @@ def load(kit_id: str) -> dict | None:
 
 def installed() -> list[dict]:
     d = kits_dir()
-    out = [summary(k) for f in sorted(d.glob("*.json")) if (k := load(f.stem))] if d.is_dir() else []
-    return sorted(out, key=lambda k: (k["id"] != MINE, -k.get("count", 0)))
+    out = [summary(k) for f in sorted(d.glob("*.json")) if f.stem not in BUILTIN and (k := load(f.stem))] if d.is_dir() else []
+    return sorted(out, key=lambda k: (k["id"] != MINE, -k.get("count", 0))) + [summary(_builtin(b)) for b in BUILTIN]
 
 
 def delete(kit_id: str) -> bool:
-    if not _ID.match(kit_id or ""):
+    if kit_id in BUILTIN or not _ID.match(kit_id or ""):
         return False
     with _LOCK:
         _CACHE.pop(kit_id, None)
@@ -537,7 +550,7 @@ def query(kit_id: str = "", q: str = "", category: str = "", offset: int = 0, li
                     continue
             hits.append((k, it))
     page = hits[max(0, offset): max(0, offset) + max(1, min(limit, 200))]
-    return {"total": len(hits), "items": [{**it, "kit": k["id"], "kit_name": k["name"], "license": k.get("source", {}).get("license", ""),
+    return {"total": len(hits), "items": [{**it, "kit": k["id"], "kit_name": k["name"], "license": it.get("license") or k.get("source", {}).get("license", ""),
                                            "repo": k.get("source", {}).get("repo", ""), "shared_css": k.get("css", ""), "kit_scope": _scope_id(k["id"], "__kit__")}
                                           for k, it in page]}
 
@@ -561,9 +574,30 @@ def add_mine(name: str, html: str, category: str = "Saved") -> dict:
     return kit["items"][0]
 
 
+def add_shader(name: str, glsl: str, author: str = "", source_url: str = "", license_: str = "") -> dict:
+    """A shader the user pasted (e.g. from Shadertoy) → My components, with its credit and license kept in the markup."""
+    if "mainImage" not in (glsl or "") or len(glsl) > 60_000:
+        raise ValueError("paste a Shadertoy-style shader: it needs a mainImage(out vec4, in vec2) function (single pass, under 60 KB)")
+    lic = (license_ or "").strip() or effects.detect_license(glsl)
+    credit = " · ".join(x for x in [name.strip(), f"by {author.strip()}" if author.strip() else "", source_url.strip(), lic] if x)
+    kit = json.loads(json.dumps(load(MINE) or {"id": MINE, "name": "My components", "source": {"license": "yours"}, "css": "", "categories": {}, "skipped": {}, "items": []}))
+    item = {"id": _scope_id(MINE, "shader", str(time.time()))[4:], "name": (name or "My shader").strip()[:60], "category": "Shaders", "author": author.strip()[:60],
+            "tags": ["shader", "shadertoy"] + (["non-commercial"] if "NC" in lic else []), "license": lic, "source_url": source_url.strip()[:300],
+            "html": effects.custom_shader_html(glsl, (name or "My shader").strip()[:60], credit) + effects.RUNTIME_TAG, "css": "", "scope": "", "fx": True,
+            "uses_channels": bool(re.search(r"\biChannel\d", glsl))}
+    kit["items"].insert(0, item)
+    kit["categories"] = {}
+    for it in kit["items"]:
+        kit["categories"][it["category"]] = kit["categories"].get(it["category"], 0) + 1
+    kit["count"] = len(kit["items"])
+    kits_dir().mkdir(parents=True, exist_ok=True)
+    (kits_dir() / f"{MINE}.json").write_text(json.dumps(kit))
+    return item
+
+
 def remove_item(kit_id: str, item_id: str) -> bool:
     kit = load(kit_id)
-    if not kit:
+    if not kit or kit.get("builtin"):
         return False
     kit = json.loads(json.dumps(kit))
     n = len(kit["items"])
