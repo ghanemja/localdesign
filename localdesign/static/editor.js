@@ -25,7 +25,7 @@
   // ---------- helpers
   const isUI = (el) => el && el.closest && el.closest("[data-ld-ui]");
   function pick(x, y) { const els = document.elementsFromPoint(x, y).filter(e => !isUI(e) && !SKIP.has(e.tagName)); return els[0] || null; }
-  function describe(el) { const cls = [...el.classList].filter(c => !c.startsWith("ld-ui")).slice(0, 2).join("."); return el.tagName.toLowerCase() + (cls ? "." + cls : ""); }
+  function describe(el) { const cls = [...el.classList].filter(c => !c.startsWith("ld-ui") && !c.startsWith("ldk-")).slice(0, 2).join(".");   /* ldk-*: kit scope classes */ return el.tagName.toLowerCase() + (cls ? "." + cls : ""); }
   function pathOf(el) { const p = []; while (el && el !== document.body) { p.unshift([...el.parentElement.children].indexOf(el)); el = el.parentElement; } return p; }
   function byPath(p) { let el = document.body; for (const i of p) { el = el.children[i]; if (!el) return null; } return el; }
   function leafText(el) { return [...el.childNodes].every(n => n.nodeType === 3 || (n.nodeType === 1 && ["B", "I", "EM", "STRONG", "SPAN", "A", "SMALL", "BR"].includes(n.tagName))); }
@@ -47,7 +47,9 @@
   function inlineStyles(root) {
     const clone = root.cloneNode(true);
     const walk = (src, dst) => { const cs = getComputedStyle(src); const decl = INLINE_PROPS.map(p => { const v = cs.getPropertyValue(p); return v ? `${p}:${v}` : ""; }).filter(Boolean).join(";"); dst.setAttribute("style", decl + (src.getAttribute("style") ? ";" + src.getAttribute("style") : "")); [...src.children].forEach((c, i) => dst.children[i] && walk(c, dst.children[i])); };
-    walk(root, clone); return clone.outerHTML;
+    walk(root, clone);
+    if (/^(block|flex|grid|list-item|table)$/.test(getComputedStyle(root).display)) { clone.style.removeProperty("width"); clone.style.removeProperty("height"); }   // fit wherever it lands
+    return clone.outerHTML;
   }
 
   // ---------- selection
@@ -89,6 +91,7 @@
     const over = pick(e.clientX, e.clientY);
     const outside = e.clientX < 0 || e.clientY < 0 || e.clientX > innerWidth || e.clientY > innerHeight;
     if (outside && !drag.out) { drag.out = true; post({ type: "dragout", html: inlineStyles(drag.el), desc: describe(drag.el) }); dropLine.style.display = "none"; return; }
+    if (outside) { post({ type: "dragmove", x: e.clientX, y: e.clientY }); return; }   // this frame keeps the mouse capture: the parent only learns the pointer from us
     if (!outside && drag.out) { drag.out = false; post({ type: "dragback" }); }
     if (!over || over === drag.el || drag.el.contains(over)) { dropLine.style.display = "none"; drag.target = null; return; }
     const r = over.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
@@ -98,7 +101,7 @@
   document.addEventListener("mouseup", e => {
     if (!drag) return; const d = drag; drag = null; dropLine.style.display = "none"; d.el.style.opacity = "";
     if (d.el.getAttribute("style") === "") d.el.removeAttribute("style");
-    if (d.out) { post({ type: "dragend", dropped: false }); return; }
+    if (d.out) { post({ type: "dragend", x: e.clientX, y: e.clientY }); return; }   // the parent drops at this point (frame coordinates)
     if (d.moving && d.target) { d.after ? d.target.after(d.el) : d.target.before(d.el); changed("move"); }
   }, true);
   function dropAt(html, x, y) {
@@ -127,6 +130,7 @@
       case "link": setLink(m.target); break;
       case "drop": dropAt(m.html, m.x, m.y); break;
       case "ping": post({ type: "ready" }); break;
+      case "save-request": if (sel) post({ type: "saved", html: inlineStyles(sel), desc: describe(sel) }); break;   // ⊕ → self-contained markup for the library
       case "dragout-request": if (drag && drag.moving && !drag.out) { drag.out = true; post({ type: "dragout", html: inlineStyles(drag.el), desc: describe(drag.el) }); dropLine.style.display = "none"; } break;
       case "dragcancel": if (drag) { drag.el.style.opacity = ""; if (drag.el.getAttribute("style") === "") drag.el.removeAttribute("style"); drag = null; dropLine.style.display = "none"; } break;
       case "play": document.body.addEventListener("click", ev => { const t = ev.target.closest("[data-link]"); if (t) { ev.preventDefault(); post({ type: "navigate", target: t.getAttribute("data-link") }); } }, true);

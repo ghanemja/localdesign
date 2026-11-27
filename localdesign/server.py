@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import __version__, codebase, components, config, designsystem, export, llm, pack, prompts
+from . import __version__, codebase, components, kits, config, designsystem, export, llm, pack, prompts
 
 STATIC = Path(__file__).parent / "static"
 CFG = config.load()
@@ -418,6 +418,16 @@ class Handler(BaseHTTPRequestHandler):
                 return _json(self, {"models": llm.list_models(cfg)})
             except llm.LLMError as e:
                 return _json(self, {"error": str(e)}, 502)
+        if u.path == "/api/kits":   # installed UI kits + the open-source packs that can be imported
+            have = {k["id"] for k in kits.installed()}
+            return _json(self, {"installed": kits.installed(), "catalog": [{"id": k, **v, "installed": k in have} for k, v in kits.CATALOG.items()]})
+        if u.path == "/api/kits/items":   # ?kit=&q=&cat=&offset=&limit= → one page of elements, ready to preview and insert
+            qs = {k: v[0] for k, v in parse_qs(u.query).items()}
+            try:
+                off, lim = int(qs.get("offset") or 0), int(qs.get("limit") or 48)
+            except ValueError:
+                return _json(self, {"error": "bad offset/limit"}, 400)
+            return _json(self, kits.query(qs.get("kit", ""), qs.get("q", ""), qs.get("cat", ""), off, lim))
         if u.path == "/api/projects":
             config.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
             items = []
@@ -495,6 +505,38 @@ class Handler(BaseHTTPRequestHandler):
                 direction = prompts.DIRECTIONS[i % len(prompts.DIRECTIONS)] if (n > 1 and kind == "screen") else None
                 threading.Thread(target=_run_variant, args=(cfg, i, brief, context, width, direction, q, mode, ds, data, assets, kind, code), daemon=True).start()
             return _sse_multiplex(self, q, n)
+        if u.path == "/api/kits/install":   # {source: catalog id} | {repo: "owner/name", branch?} | {files: [{path, content}], name} | {path: "/abs/folder", name}
+            try:
+                if body.get("source"):
+                    src = kits.CATALOG.get(str(body["source"]))
+                    if not src:
+                        return _json(self, {"error": "unknown kit"}, 400)
+                    kid, name, files, meta = str(body["source"]), src["name"], kits.fetch_repo(src["repo"], src["branch"]), {"repo": src["repo"], "url": src["url"], "license": src["license"]}
+                elif body.get("repo"):
+                    repo = str(body["repo"]).strip().removeprefix("https://github.com/").strip("/")
+                    kid, name, files = re.sub(r"[^a-z0-9_-]+", "-", repo.split("/")[-1].lower()).strip("-")[:40] or "kit", body.get("name") or repo, kits.fetch_repo(repo, str(body.get("branch") or ""))
+                    meta = {"repo": repo, "url": f"https://github.com/{repo}", "license": "see LICENSE"}
+                elif body.get("files"):
+                    name = str(body.get("name") or "My kit")[:60]
+                    kid, files, meta = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")[:40] or "kit", kits.from_upload(body["files"]), {"license": "yours"}
+                elif body.get("path"):
+                    name = str(body.get("name") or Path(str(body["path"])).name)[:60]
+                    kid, files, meta = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")[:40] or "kit", kits.read_folder(str(body["path"])), {"license": "yours", "path": str(body["path"])}
+                else:
+                    return _json(self, {"error": "need source, repo, files or path"}, 400)
+                cid = None if body.get("source") else kits.detect(files)
+                if cid:                                   # an unzipped/offline copy of a known pack → the same kit as a download
+                    c = kits.CATALOG[cid]; kid, name, meta = cid, c["name"], {"repo": c["repo"], "url": c["url"], "license": c["license"]}
+                if kid == kits.MINE:
+                    kid = "mine-import"
+                return _json(self, kits.install(kid, name, files, meta))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
+        if u.path == "/api/kits/mine":   # "Save to library" from the canvas: {name, html, category?}
+            try:
+                return _json(self, kits.add_mine(str(body.get("name") or ""), str(body.get("html") or ""), str(body.get("category") or "Saved")))
+            except ValueError as e:
+                return _json(self, {"error": str(e)}, 400)
         if u.path == "/api/code":   # {project, name, files:[{path, content}], add?} → stored under ~/.localdesign/code/<project>.json
             pid = str(body.get("project") or "")
             if not SAFE_ID.match(pid):
@@ -712,6 +754,10 @@ class Handler(BaseHTTPRequestHandler):
                 except FileNotFoundError:
                     pass
             return _json(self, {"error": "not found"}, 404)
+        if u.path.startswith("/api/kits/"):   # /api/kits/<kit> or /api/kits/<kit>/items/<item>
+            parts = u.path.split("/")[3:]
+            ok = kits.delete(parts[0]) if len(parts) == 1 else (len(parts) == 3 and parts[1] == "items" and kits.remove_item(parts[0], parts[2]))
+            return _json(self, {"ok": True}) if ok else _json(self, {"error": "not found"}, 404)
         if u.path.startswith("/api/code/"):
             pid = u.path.rsplit("/", 1)[1]
             if SAFE_ID.match(pid) and codebase.delete(pid):

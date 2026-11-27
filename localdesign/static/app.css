@@ -153,7 +153,9 @@ ul.plain li .meta { color: var(--muted); font-size: 12px; flex: 1; }
 @media (max-width: 900px) { #dsLabel, #dataLabel { display: none; } #modelLabel { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; } }
 #topbar .right { flex-wrap: nowrap; white-space: nowrap; }
 
-.frame .eltools { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 11px; }
+/* floats above the frame: in the flow it pushed the screen down on every selection, moving the element away from the cursor */
+.frame .eltools { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 3; display: flex; align-items: center; gap: 4px; padding: 4px 8px;
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 11px; }
 .frame .eltools .crumb { color: var(--accent); font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 45%; }
 .frame .eltools button { border: 1px solid transparent; background: transparent; padding: 2px 6px; border-radius: 5px; font-size: 12px; line-height: 1.2; color: var(--ink); }
 .frame .eltools button:hover { background: var(--panel); border-color: var(--line); }
@@ -213,3 +215,31 @@ body:has(#library:not(.hidden)) #promptBar { left: calc(50% + 160px); width: min
 .libitem, .libitem * { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; }
 .libitem .lbl::before { content: "⠿"; color: var(--muted); margin-right: 4px; }
 #library .libhint b { color: var(--ink); }
+
+/* UI kits browser (Library → UI kits): the panel widens; previews are live (hover animates, toggles toggle) */
+body.libwide #library { width: 640px; }
+body.libwide #viewport.withlib { margin-left: 640px; }
+body.libwide:has(#library:not(.hidden)) #promptBar { left: calc(50% + 320px); width: min(720px, calc(100% - 672px)); }
+.kitbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kitbar input[type=search] { flex: 1 1 200px; min-width: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.kitbar select { max-width: 150px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.kitbar .ic { border: 1px solid var(--line); padding: 4px 8px; }
+.kitbar .ic.on { background: var(--ink); color: var(--bg); }
+.kitgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 8px; }
+.libitem.kit { cursor: grab; }
+.libitem.kit .thumb { height: 132px; pointer-events: auto; background: #f4f4f5; }
+.libitem.kit .thumb iframe { width: 100%; height: 100%; transform: none; pointer-events: auto; border: 0; display: block; }
+.libitem.kit .lbl { text-transform: none; gap: 2px; }
+.libitem.kit .lbl::before { content: none; }
+.libitem.kit .lbl .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.libitem.kit .lbl .by { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.libitem.kit .lbl .ic { margin-left: 0; padding: 0 4px; font-size: 13px; color: var(--muted); }
+.libitem.kit .lbl .ic:hover { color: var(--accent); }
+.libitem.kit .lbl .ins { font-weight: 700; color: var(--accent); }
+#kitMore { text-align: center; padding: 10px 0; }
+#kitCatalog h3 { margin: 14px 0 6px; }
+.kitsrc { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.kitsrc .t { font-weight: 600; } .kitsrc .d { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+.kitsrc .m { color: var(--muted); font-size: 11px; grid-column: 1 / -1; }
+#kitCatalog .inline { display: flex; gap: 6px; margin: 6px 0; } #kitCatalog .inline input { flex: 1; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.err-text { color: var(--danger); }

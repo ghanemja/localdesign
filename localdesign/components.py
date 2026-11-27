@@ -821,9 +821,17 @@ SAMPLES: dict[str, dict] = {
 LIB_STYLE_ID = "ld-lib"
 
 
+LIB_SCOPE = "ldk-builtin"
+
+
 def library(ds: dict | None = None) -> dict:
-    """Catalog for the drag-and-drop palette: fragments + the one stylesheet they need."""
+    """Catalog for the drag-and-drop palette: fragments + the one stylesheet they need.
+
+    `css` is for the palette's own previews; `style_tag` is what gets dropped into a screen: scoped to the dropped
+    elements (kits.scope_css), with the token variables as zero-specificity defaults, so a component adopts the screen's
+    own --primary/--bg/--font when it has them and never restyles the rest of the screen."""
+    from .kits import add_root_class, scope_css
     css = _tokens_css((ds or {}).get("tokens") or {}, ds) + BASE_CSS
     ctx = {"data": {}}
-    items = [{"id": k, "name": k.replace("-", " "), "html": render_node(v, ctx)} for k, v in SAMPLES.items()]
-    return {"css": css, "style_tag": f'<style data-{LIB_STYLE_ID}="1">{css}</style>', "items": items}
+    items = [{"id": k, "name": k.replace("-", " "), "html": add_root_class(render_node(v, ctx), LIB_SCOPE)} for k, v in SAMPLES.items()]
+    return {"css": css, "style_tag": f'<style data-{LIB_STYLE_ID}="builtin">{scope_css(css, LIB_SCOPE, root_vars="global")}</style>', "items": items}

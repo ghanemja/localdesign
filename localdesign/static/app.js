@@ -125,7 +125,7 @@
       const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); scheduleSave(); drawArrows(); };
       window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
     });
-    $(".title", el).addEventListener("blur", e => { s.title = e.target.textContent.trim() || s.title; e.target.textContent = s.title; scheduleSave(); drawArrows(); });
+    $(".title", el).addEventListener("blur", e => { const old = s.title; s.title = e.target.textContent.trim() || s.title; e.target.textContent = s.title; if (old !== s.title) renameLinks(old, s.title); scheduleSave(); drawArrows(); });
     $(".title", el).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
     $(".ver", el).addEventListener("click", e => { e.stopPropagation(); cycleVersion(s); });
     $(".dup", el).addEventListener("click", e => { e.stopPropagation(); duplicate(s); });
@@ -133,6 +133,24 @@
     $(".open", el).addEventListener("click", async e => { e.stopPropagation(); const b = new Blob([await inlined(s.html)], { type: "text/html" }); window.open(URL.createObjectURL(b), "_blank"); });
     $(".del", el).addEventListener("click", e => { e.stopPropagation(); removeScreen(s.id); });
     $(".regen", el).addEventListener("click", e => { e.stopPropagation(); regenerate(s); });
+  }
+  function linkContext(s) {   // navigation instructions for a screen that links to others (flow plan + data-link already in it)
+    const links = [...new Set([...((s.flow && s.flow.links) || []), ...linksOf(s)])].filter(t => screenByTitle(t));
+    if (!s.flow && !links.length) return "";
+    const sibs = s.flow ? project.screens.filter(x => x.flow && x.flow.group === s.flow.group).map(x => x.title) : [s.title, ...links];
+    return `This screen is part of a flow with these screens: ${sibs.join(", ")}.\nNavigation elements that lead to another screen must carry data-link="<exact screen title>" (in spec mode: set "link" on buttons/nav items/list rows). This screen links to: ${links.join(", ") || "none"}.`;
+  }
+  function renameLinks(old, now) {   // links are by title: keep every data-link / spec link / planned link pointing at a renamed screen
+    const a = `data-link="${esc(old)}"`, b = `data-link="${esc(now)}"`;
+    const walk = n => { if (Array.isArray(n)) n.forEach(walk); else if (n && typeof n === "object") for (const k in n) { if (k === "link" && n[k] === old) n[k] = now; else walk(n[k]); } };
+    for (const x of project.screens) {
+      if (x.flow && x.flow.links) x.flow.links = x.flow.links.map(t => t === old ? now : t);
+      if (x.spec) walk(x.spec);
+      if (x.html && x.html.includes(a)) {
+        x.html = x.html.split(a).join(b); if (x.versions.length) x.versions[x.versions.length - 1] = x.html;
+        const fe = frames.get(x.id); if (fe) setFrameHTML(fe, x.html);
+      }
+    }
   }
   function cycleVersion(s) {
     const i = s.versions.indexOf(s.html);
@@ -277,7 +295,8 @@
     const brief = s.brief || s.title;
     aborter = new AbortController(); setBusy(true, "Regenerating");
     try {
-      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context: projectContext([s]), ...genExtras(), kind: s.kind || "screen" }, ev => handleEvent(ev, [s]), aborter.signal);
+      const links = linkContext(s), context = [projectContext([s]), links].filter(Boolean).join("\n") || null;   // keep its navigation
+      await streamPost("/api/generate", { brief, variants: 1, width: s.width, context, ...genExtras(), kind: s.kind || "screen" }, ev => handleEvent(ev, [s]), aborter.signal);
     } catch (e) { if (e.name !== "AbortError") toast("Error: " + e.message, 6000); }
     finally { finish([s]); }
   }
@@ -525,8 +544,10 @@
       case "dragstart": pendingDrag = id; break;
       case "dragout": startXDrag(id, m.html, m.desc); break;
       case "dragback": cancelXDrag(false); break;
-      case "dragend": pendingDrag = null; break;
+      case "dragmove": { const pt = framePoint(el, m.x, m.y); xdragMove(pt.x, pt.y); break; }
+      case "dragend": pendingDrag = null; if (xdrag && m.x != null) { const pt = framePoint(el, m.x, m.y); xdragDrop(pt.x, pt.y); } break;
       case "navigate": playNavigate(m.target); break;
+      case "saved": saveToMine(m.html, m.desc); break;
     }
   });
   function elClear(id) { if (elSel && elSel.frame === id) { elSel = null; updateChip(); } const el = frames.get(id); if (el) hideElTools(el); }
@@ -554,6 +575,7 @@
     if (act === "style") { toggleStylePop(fr); return; }
     if (act === "link") { toggleLinkPop(fr); return; }
     if (act === "ai") { promptEl.focus(); toast("Describe the change in the prompt bar", 1800); return; }
+    if (act === "save") { postFrame(id, { type: "save-request" }); return; }
     const msg = { edit: { type: "edit" }, up: { type: "move", dir: -1 }, down: { type: "move", dir: 1 }, dup: { type: "dup" }, delete: { type: "delete" } }[act];
     if (msg) postFrame(id, msg);
   });
@@ -595,23 +617,29 @@
     const g = $("#dragGhost"); g.textContent = "⇢ " + desc; g.classList.remove("hidden");
   }
   function cancelXDrag(notify = true) { if (!xdrag) return; if (notify && xdrag.from !== "library") postFrame(xdrag.from, { type: "dragcancel" }); xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); $$(".frame.droptarget").forEach(f => f.classList.remove("droptarget")); }
-  window.addEventListener("pointermove", e => {
-    if (pendingDrag && !xdrag) { postFrame(pendingDrag, { type: "dragout-request" }); pendingDrag = null; }
-    if (!xdrag) return;
-    const g = $("#dragGhost"); g.style.left = e.clientX + "px"; g.style.top = e.clientY + "px";
-    const fr = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains("frame"));
+  // A drag that starts inside a screen keeps the mouse captured by that iframe, so the parent never sees the pointer:
+  // the shim forwards it (dragmove/dragend in frame coordinates) and framePoint() maps it back to the page.
+  function framePoint(el, x, y) { const f = $("iframe", el), r = f.getBoundingClientRect(), z = r.width / (f.offsetWidth || 1); return { x: r.left + x * z, y: r.top + y * z }; }
+  function frameAt(x, y) { return document.elementsFromPoint(x, y).find(n => n.classList && n.classList.contains("frame")); }
+  function xdragMove(x, y) {
+    const g = $("#dragGhost"); g.style.left = x + "px"; g.style.top = y + "px";
+    const fr = frameAt(x, y);
     $$(".frame.droptarget").forEach(f => { if (f !== fr) f.classList.remove("droptarget"); }); if (fr && fr.dataset.id !== xdrag.from) fr.classList.add("droptarget");
-  });
-  window.addEventListener("pointerup", e => {
-    if (!xdrag) return;
-    const fr = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains("frame"));
+  }
+  function xdragDrop(x, y) {
+    const fr = frameAt(x, y);
     if (fr && fr.dataset.id !== xdrag.from) {
       const r = $("iframe", fr).getBoundingClientRect(), z = project.camera.z;
-      postFrame(fr.dataset.id, { type: "drop", html: xdrag.html, x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z });
+      postFrame(fr.dataset.id, { type: "drop", html: xdrag.html, x: (x - r.left) / z, y: (y - r.top) / z });
       if (xdrag.from !== "library") postFrame(xdrag.from, { type: "dragcancel" }); select(fr.dataset.id);
       xdrag = null; document.body.classList.remove("xdrag"); $("#dragGhost").classList.add("hidden"); fr.classList.remove("droptarget");
     } else cancelXDrag(true);
+  }
+  window.addEventListener("pointermove", e => {
+    if (pendingDrag && !xdrag) { postFrame(pendingDrag, { type: "dragout-request" }); pendingDrag = null; }
+    if (xdrag) xdragMove(e.clientX, e.clientY);
   });
+  window.addEventListener("pointerup", e => { if (xdrag) xdragDrop(e.clientX, e.clientY); });
   window.addEventListener("keydown", e => { if (e.key === "Escape" && xdrag) cancelXDrag(true); });
 
   // ------------------------------------------------------------ flows: links, arrows, prototype player
@@ -692,8 +720,8 @@
   }
   $("#flowGo").addEventListener("click", async () => {
     if (!plan.length || goBtn.disabled) return; flowDlg.close();
-    const width = project.device, y = nextRowY(); const titles = plan.map(p => p.title);
-    const batch = plan.map((p, i) => ({ id: uid(), title: p.title, brief: p.brief, x: i * (width + 120), y, width, html: "", versions: [], flow: { links: p.links || [] } }));
+    const width = project.device, y = nextRowY(), group = uid();
+    const batch = plan.map((p, i) => ({ id: uid(), title: p.title, brief: p.brief, x: i * (width + 120), y, width, html: "", versions: [], flow: { links: p.links || [], group } }));
     project.screens.push(...batch); batch.forEach(s => busyIds.add(s.id)); renderAll();
     batch.forEach((s, i) => { if (i) frames.get(s.id).classList.add("queued"); setLoading(s, true); }); fitAll();
     const flowText = $("#flowText").value;   // @mentions in the flow description apply to every screen of the flow
@@ -702,7 +730,7 @@
       for (let i = 0; i < batch.length; i++) {
         const s = batch[i], p = plan[i];
         frames.get(s.id)?.classList.remove("queued"); startedAt[s.id] = Date.now();
-        const context = (projectContext([s]) || "") + "\n" + `This screen is part of a flow with these screens: ${titles.join(", ")}.\nNavigation elements that lead to another screen must carry data-link="<exact screen title>" (in spec mode: set "link" on buttons/nav items/list rows). This screen links to: ${(p.links || []).join(", ") || "none"}.`;
+        const context = (projectContext([s]) || "") + "\n" + linkContext(s);
         $("#status").textContent = `Flow: ${i + 1}/${batch.length} · ${s.title}`;
         const ex = genExtras(); if (ex.code) ex.code.text = flowText;
         await streamPost("/api/generate", { brief: `${s.title}: ${s.brief}`, variants: 1, width, context, ...ex }, ev => handleEvent(ev, [s]), aborter.signal);
@@ -714,10 +742,15 @@
 
   // ------------------------------------------------------------ library panel (components + assets)
   const lib = $("#library"); let libLoaded = false, libStyleTag = "";
-  function showLib(on) { lib.classList.toggle("hidden", !on); viewport.classList.toggle("withlib", on); if (on && !libLoaded) loadLibrary(); if (on) renderAssets(); }
+  function showLib(on) { lib.classList.toggle("hidden", !on); viewport.classList.toggle("withlib", on); if (on && !libLoaded) loadLibrary(); if (on) renderAssets(); if (!on) document.body.classList.remove("libwide"); else if (!$("#libKits").classList.contains("hidden")) document.body.classList.add("libwide"); }
   $("#libBtn").addEventListener("click", () => showLib(lib.classList.contains("hidden")));
   $("#libClose").addEventListener("click", () => showLib(false));
-  $$("#library [data-tab]").forEach(b => b.addEventListener("click", () => { $$("#library [data-tab]").forEach(x => x.classList.toggle("on", x === b)); $("#libComponents").classList.toggle("hidden", b.dataset.tab !== "components"); $("#libAssets").classList.toggle("hidden", b.dataset.tab !== "assets"); }));
+  $$("#library [data-tab]").forEach(b => b.addEventListener("click", () => {
+    const tab = b.dataset.tab; $$("#library [data-tab]").forEach(x => x.classList.toggle("on", x === b));
+    $("#libComponents").classList.toggle("hidden", tab !== "components"); $("#libAssets").classList.toggle("hidden", tab !== "assets"); $("#libKits").classList.toggle("hidden", tab !== "kits");
+    $("#library > .libhint").classList.toggle("hidden", tab === "kits"); document.body.classList.toggle("libwide", tab === "kits");
+    if (tab === "kits" && !kitsLoaded) loadKits();
+  }));
   async function loadLibrary() {
     const r = await fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ design_system: project.designSystem || undefined }) });
     const d = await r.json(); libStyleTag = d.style_tag; libLoaded = true;
@@ -779,6 +812,138 @@
     postFrame(s.id, { type: "drop", html, x: 20, y: Math.max(10, (r.height / z) - 40) });   // near the bottom of the visible area
     toast(`Added ${desc} to ${s.title}`, 1800);
   }
+
+  // ------------------------------------------------------------ UI kits: browse open-source and your own element collections
+  const kitState = { kit: "", cat: "", q: "", offset: 0, total: 0, dark: false, kits: [], catalog: [], seq: 0, busy: false, catalogOpen: false };
+  let kitsLoaded = false;
+  const kitPreviews = new Map();   // preview window → { it, frame }: drags can start inside a live preview
+  const KIT_PREVIEW_JS = `<script>(()=>{const P=m=>parent.postMessage(Object.assign({ldkit:1},m),"*");let d=null;
+addEventListener("dragstart",e=>e.preventDefault(),true);
+addEventListener("mousedown",e=>{if(e.button===0)d={x:e.clientX,y:e.clientY,on:false}},true);
+addEventListener("mousemove",e=>{if(!d)return;if(!d.on&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>6){d.on=true;P({t:"start"})}if(d.on)P({t:"move",x:e.clientX,y:e.clientY})},true);
+addEventListener("mouseup",e=>{if(d&&d.on)P({t:"end",x:e.clientX,y:e.clientY});d=null},true);
+const fit=()=>{const w=document.getElementById("w");if(!w||w.dataset.fill)return;const s=Math.min(1,(innerWidth-14)/Math.max(1,w.scrollWidth),(innerHeight-14)/Math.max(1,w.scrollHeight));w.style.transform="scale("+s+")"};
+addEventListener("load",fit);setTimeout(fit,300)})()<\/script>`;
+  function kitPreviewDoc(it) {
+    const dark = kitState.dark, fill = it.category === "Patterns";
+    return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}body{display:grid;place-items:center;overflow:hidden;background:${dark ? "#18181b" : "#f4f4f5"};color:${dark ? "#eee" : "#111"};font-family:system-ui,sans-serif}#w{display:inline-block;transform-origin:center}#w[data-fill]{position:fixed;inset:0}</style>`
+      + `<style>${it.shared_css || ""}\n${it.css || ""}</style></head><body><div id="w"${fill ? " data-fill=1" : ""}>${it.html}</div>${KIT_PREVIEW_JS}</body></html>`;
+  }
+  function kitInsertHTML(it) {   // what lands in a screen: scoped CSS (deduplicated per element/kit by the editor) + the markup
+    const credit = `/* ${it.name}${it.author ? " by " + it.author : ""} — ${it.kit_name}${it.license ? " (" + it.license + ")" : ""}${it.repo ? ", github.com/" + it.repo : ""} */`.replace(/\*\//g, "* /").replace(/^\/\* /, "/* ").replace(/\* \/$/, "*/");
+    return (it.shared_css ? `<style data-ld-lib="kit-${it.kit_scope}">${credit}\n${it.shared_css}</style>` : "")
+      + (it.css ? `<style data-ld-lib="${it.scope}">${credit}\n${it.css}</style>` : "") + it.html;
+  }
+  async function loadKits() {
+    let d; try { d = await (await fetch("/api/kits")).json(); } catch { $("#kitMore").textContent = "Could not load kits."; return; }
+    kitState.kits = d.installed; kitState.catalog = d.catalog; kitsLoaded = true;
+    const total = d.installed.reduce((a, k) => a + k.count, 0);
+    $("#kitSel").innerHTML = `<option value="">All kits (${total})</option>` + d.installed.map(k => `<option value="${esc(k.id)}">${esc(k.name)} (${k.count})</option>`).join("");
+    if (!d.installed.some(k => k.id === kitState.kit)) kitState.kit = "";
+    $("#kitSel").value = kitState.kit; $("#kitQ").placeholder = total ? `Search ${total.toLocaleString()} elements — e.g. glow button, toggle, loader` : "Add a kit to start browsing";
+    kitCats(); renderKitCatalog();
+    $("#kitCatalog").classList.toggle("hidden", !!d.installed.length && !kitState.catalogOpen);
+    await kitSearch(true);
+  }
+  function kitCats() {
+    const cats = {};
+    for (const k of kitState.kits) if (!kitState.kit || k.id === kitState.kit) for (const [c, n] of Object.entries(k.categories || {})) cats[c] = (cats[c] || 0) + n;
+    if (!cats[kitState.cat]) kitState.cat = "";
+    $("#kitCat").innerHTML = `<option value="">All categories</option>` + Object.keys(cats).sort().map(c => `<option value="${esc(c)}">${esc(c)} (${cats[c]})</option>`).join("");
+    $("#kitCat").value = kitState.cat;
+  }
+  async function kitSearch(reset) {
+    if (reset) { kitState.offset = 0; kitState.seq++; kitState.busy = false; $("#kitGrid").innerHTML = ""; kitPreviews.clear(); }
+    if (kitState.busy || !kitState.kits.length) { if (!kitState.kits.length) $("#kitMore").textContent = ""; return; }
+    kitState.busy = true; const seq = kitState.seq;
+    const qs = new URLSearchParams({ kit: kitState.kit, cat: kitState.cat, q: kitState.q, offset: kitState.offset, limit: 30 });
+    try {
+      const d = await (await fetch("/api/kits/items?" + qs)).json(); if (seq !== kitState.seq) return;
+      kitState.total = d.total; for (const it of d.items) $("#kitGrid").appendChild(kitCard(it)); kitState.offset += d.items.length;
+      $("#kitMore").textContent = !d.total ? "Nothing matches — try another word or category." : kitState.offset < d.total ? `${kitState.offset} of ${d.total.toLocaleString()} — scroll for more` : `${d.total.toLocaleString()} element${d.total === 1 ? "" : "s"}`;
+    } catch { $("#kitMore").textContent = "Could not load elements."; }
+    finally { if (seq === kitState.seq) kitState.busy = false; }
+  }
+  function kitCard(it) {
+    const card = document.createElement("div"); card.className = "libitem kit"; card.title = `${it.name}${it.author ? " by " + it.author : ""} · ${it.category} · ${it.kit_name}`;
+    card.innerHTML = `<div class="thumb"><iframe sandbox="allow-scripts" loading="lazy" title="${esc(it.name)}"></iframe></div><div class="lbl"><span class="nm">${esc(it.name)}</span><span class="by">${it.author ? "· " + esc(it.author) : ""}</span>`
+      + `<button class="ic ins" title="Insert into the selected screen">＋</button><button class="ic star" title="Add to the design system: generated screens (HTML engine) reuse this exact markup">★</button>`
+      + (it.kit === "mine" ? `<button class="ic del" title="Remove from My components">×</button>` : it.repo ? `<button class="ic src" title="Source: github.com/${esc(it.repo)} · ${esc(it.license)}">ⓘ</button>` : "") + `</div>`;
+    const f = card.querySelector("iframe"); f.srcdoc = kitPreviewDoc(it);
+    f.addEventListener("load", () => { if (f.contentWindow) kitPreviews.set(f.contentWindow, { it, frame: f }); });
+    card.querySelector(".ins").addEventListener("click", e => { e.stopPropagation(); insertIntoSelected(kitInsertHTML(it), it.name); });
+    card.querySelector(".star").addEventListener("click", e => { e.stopPropagation(); kitToDS(it); });
+    const src = card.querySelector(".src"); if (src) src.addEventListener("click", e => { e.stopPropagation(); window.open(`https://github.com/${it.repo}`, "_blank", "noopener"); });
+    const del = card.querySelector(".del"); if (del) del.addEventListener("click", async e => { e.stopPropagation(); await fetch(`/api/kits/mine/items/${it.id}`, { method: "DELETE" }); card.remove(); loadKits(); });
+    wireLibDrag(card.querySelector(".lbl"), () => kitInsertHTML(it), it.name);   // the label strip drags/inserts; the preview drags via its own script
+    return card;
+  }
+  window.addEventListener("message", e => {   // drags that start inside a live preview (the preview keeps the mouse; it forwards the pointer)
+    const m = e.data; if (!m || !m.ldkit) return;
+    const pv = kitPreviews.get(e.source); if (!pv) return;
+    if (m.t === "start") { if (!xdrag) startXDrag("library", kitInsertHTML(pv.it), pv.it.name); return; }
+    if (!xdrag) return;
+    const r = pv.frame.getBoundingClientRect();
+    if (m.t === "move") xdragMove(r.left + m.x, r.top + m.y); else if (m.t === "end") xdragDrop(r.left + m.x, r.top + m.y);
+  });
+  function kitToDS(it) {
+    const ds = project.designSystem || (project.designSystem = { name: "", tokens: {}, components: [], css: "", notes: "", palette: [] });
+    ds.components ||= [];
+    if (ds.components.some(c => c.html === it.html)) { toast(`${it.name} is already in the design system`); return; }
+    ds.components.push({ name: it.name, description: `${it.category} — ${it.kit_name}${it.author ? ", by " + it.author : ""}`, html: it.html });
+    const add = [it.shared_css && !(ds.css || "").includes(it.kit_scope) ? it.shared_css : "", it.css || ""].filter(Boolean).join("\n");
+    ds.css = [ds.css || "", add].filter(Boolean).join("\n");
+    dsIndicator(); scheduleSave(); libLoaded = false;
+    toast(`★ ${it.name} added to the design system (${ds.components.length} component${ds.components.length === 1 ? "" : "s"}). HTML-engine screens will reuse its markup; it is also under My assets → Brand snippets.`, 6000);
+  }
+  async function saveToMine(html, desc) {
+    const name = prompt("Save to your library as:", desc || "component"); if (name === null) return;
+    const r = await fetch("/api/kits/mine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, html }) });
+    const d = await r.json(); if (d.error) { toast(d.error, 5000); return; }
+    toast(`⊕ Saved “${d.name}” to My components (Library → UI kits)`, 4000);
+    if (kitsLoaded) loadKits();
+  }
+  function renderKitCatalog() {
+    const own = kitState.kits.filter(k => !kitState.catalog.some(c => c.id === k.id));
+    $("#kitCatList").innerHTML = kitState.catalog.map(c => `<div class="kitsrc"><span class="t">${esc(c.name)}</span><span>${c.installed ? `<button type="button" class="ghost" data-rm="${esc(c.id)}">Remove</button>` : `<button type="button" data-get="${esc(c.id)}">Download</button>`}</span><span class="d">${esc(c.desc)}</span><span class="m">${esc(c.license)} · <a href="${esc(c.url)}" target="_blank" rel="noopener">github.com/${esc(c.repo)}</a> · ${esc(c.size)}</span></div>`).join("")
+      + own.map(k => `<div class="kitsrc"><span class="t">${esc(k.name)}</span><span><button type="button" class="ghost" data-rm="${esc(k.id)}">Remove</button></span><span class="m">${k.count} elements${k.source && k.source.repo ? " · github.com/" + esc(k.source.repo) : ""}</span></div>`).join("");
+  }
+  async function installKit(body, label) {
+    const msg = $("#kitMsg"); msg.textContent = `${label}…`; msg.className = "small";
+    try {
+      const r = await fetch("/api/kits/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await r.json(); if (d.error) throw new Error(d.error);
+      const sk = Object.entries(d.skipped || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${k === "tailwind" ? "Tailwind-only (need a build step)" : k}`).join(", ");
+      msg.textContent = `✓ ${d.name}: ${d.count.toLocaleString()} elements imported${sk ? ` · skipped ${sk}` : ""}.`;
+      kitState.kit = d.id; kitState.cat = ""; kitState.q = ""; $("#kitQ").value = ""; kitState.catalogOpen = false; await loadKits();   // show the new kit, unfiltered $("#kitCatalog").classList.add("hidden");
+      toast(`✓ ${d.name}: ${d.count.toLocaleString()} elements — hover to preview, drag onto a screen`, 5000);
+    } catch (e) { msg.textContent = "✗ " + e.message; msg.className = "small err-text"; }
+  }
+  $("#kitCatList").addEventListener("click", async e => {
+    const g = e.target.closest("[data-get]"), rm = e.target.closest("[data-rm]");
+    if (g) { const c = kitState.catalog.find(x => x.id === g.dataset.get); g.disabled = true; await installKit({ source: g.dataset.get }, `Downloading ${c.name} from GitHub and importing (${c.size})`); g.disabled = false; }
+    if (rm && confirm("Remove this kit? Elements already on screens stay.")) { await fetch("/api/kits/" + rm.dataset.rm, { method: "DELETE" }); await loadKits(); kitState.catalogOpen = true; $("#kitCatalog").classList.remove("hidden"); }
+  });
+  $("#kitAddBtn").addEventListener("click", () => { kitState.catalogOpen = $("#kitCatalog").classList.contains("hidden"); $("#kitCatalog").classList.toggle("hidden", !kitState.catalogOpen); renderKitCatalog(); if (kitState.catalogOpen) $("#kitCatalog").scrollIntoView({ block: "start" }); });
+  $("#kitImportRepo").addEventListener("click", () => { const repo = $("#kitRepo").value.trim(); if (repo) installKit({ repo }, `Downloading ${repo} and importing`); });
+  $("#kitImportFolder").addEventListener("click", () => $("#kitFolder").click());
+  $("#kitFolder").addEventListener("change", async e => {
+    const fs = [...e.target.files]; e.target.value = ""; if (!fs.length) return;
+    const root = (fs[0].webkitRelativePath || "").split("/")[0] || "My kit", files = [];
+    for (const f of fs) {
+      const p = f.webkitRelativePath || f.name;
+      if (/(^|\/)(node_modules|\.git)\//.test(p) || f.size > 200000 || !/\.(html?|css)$|(^|\/)(licen[cs]e|copying)[^/]*$/i.test(p)) continue;
+      files.push({ path: p, content: await f.text() });
+    }
+    if (!files.length) { $("#kitMsg").textContent = "No .html or .css files in that folder."; return; }
+    installKit({ files, name: root }, `Importing ${files.length} files from ${root}`);
+  });
+  let kitTimer;
+  $("#kitQ").addEventListener("input", e => { clearTimeout(kitTimer); kitTimer = setTimeout(() => { kitState.q = e.target.value.trim(); kitSearch(true); }, 200); });
+  $("#kitSel").addEventListener("change", e => { kitState.kit = e.target.value; kitCats(); kitSearch(true); });
+  $("#kitCat").addEventListener("change", e => { kitState.cat = e.target.value; kitSearch(true); });
+  $("#kitBg").addEventListener("click", () => { kitState.dark = !kitState.dark; $("#kitBg").classList.toggle("on", kitState.dark); kitSearch(true); });
+  new IntersectionObserver(es => { if (es.some(x => x.isIntersecting) && kitState.offset < kitState.total) kitSearch(false); }, { root: lib }).observe($("#kitMore"));
   $("#assetUpload").addEventListener("click", () => $("#assetFile").click());
   $("#assetFile").addEventListener("change", async e => {
     if (!(await ensureProject())) { toast("Could not create the project on the server — is lde still running?"); return; }
