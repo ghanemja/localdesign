@@ -49,6 +49,7 @@ Pick Open Design or Dyad if you can run a frontier agent. Pick localdesign if yo
 | **Artifacts too** | Switch the prompt bar to **Artifact**: working single-file apps, calculators, charts, games, interactive docs — plain JS, no CDN. Same canvas, same editor, same exports. | Mockups only (or artifacts only) |
 | **Flows, not screens** | Paste a journey or a PRD → planned screens → generated with navigation links → arrows on the canvas → ▶ Play the clickable prototype. | Isolated screens |
 | **Real data** | Paste JSON/CSV → tables and lists use your actual rows. | Lorem ipsum |
+| **Your existing code** | 📎 Attach (or drop) your app's source folder, then reference files in any prompt: *"Redesign @src/pages/Settings.tsx using @src/components/"*. Screens reuse your component names, copy, fields and theme. Only the files you mention or pin go to the model (style files are pinned for you), within a per-model budget, and the audit log lists them. | Prompt only |
 | **Implementation pack** | Export ▾ → a zip of Markdown an engineer *or a small local model* can build from: `ARCHITECTURE.md` (inventory, navigation graph, inferred data model), `DESIGN_SYSTEM.md`, `FLOWS.md`, `DATA.md`, `IMPLEMENTATION_PLAN.md`, `AGENTS.md` (rules for the agent), `VERIFY.md` + `verify.sh` (grep-able checks the agent runs on its own work), `DESIGN.md`, per-screen docs with props, exact markup and verbatim copy, reference HTML + PNG, `tokens.css`, `components.css`, assets. Deterministic, offline; optionally a model-written overview. Built for teams (government, healthcare) that can't use frontier tooling. | HTML files |
 | **Round trip** | In: PRD/ticket text. Out: design-spec Markdown, per-screen React (.jsx + .css), AI React + Tailwind, self-contained HTML. | HTML only |
 | **Air-gap ready** | Stdlib Python server + vanilla JS, no CDN in generated output (optional), audit log of every model call, Origin/Host guard, works behind corporate proxies with any OpenAI-compatible endpoint. | Cloud or Electron |
@@ -102,6 +103,7 @@ Config persists in `~/.localdesign/config.json` (keys stored in plaintext there 
 - **Desktop / Tablet / Phone**: sets the width for new screens; with a screen selected it resizes that screen (spec screens re-render in the phone layout; HTML screens reflow — ↻ regenerates at the new width).
 - **Design system** (◫): paste `:root{…}` / tailwind config / tokens JSON / an HTML page, a **DESIGN.md**, or **fetch a running site** (page + its same-origin stylesheets → tokens); adjust tokens; add component snippets and guidelines. Spec screens re-render instantly with the new tokens.
 - **Data** (⊞): paste JSON or CSV as a named source; mention it in briefs.
+- **Code** (📎 in the prompt bar, or drop a folder anywhere): attach your existing app's source. Type `@` in the prompt to reference a file (`@src/pages/Settings.tsx`, `@Button`) or a whole folder (`@src/components/`); the completion list drills into folders. Works for new screens, iterations, element edits and flows. **Pinned** files (click the 📁 chip; `tailwind.config.*`, theme/tokens files and a global stylesheet with CSS variables are pinned automatically) go into every prompt. Each prompt also gets a compact list of file names so the model knows your components and routes. Only text sources are read — `node_modules`, build output, lockfiles, binaries, `.env` and key files are skipped — and they are stored in `~/.localdesign/code/<project>.json`. The amount of code per prompt is capped by model size (6 KB for small local models, 32 KB for 30B+ local, 120 KB hosted); change it in Settings if your local model has a bigger context window (Ollama: raise `num_ctx`).
 - **Flow** (⇶): describe a journey or paste a PRD → edit the planned screen list → generate all with links. Arrows show navigation; **▶ Play** runs the prototype.
 - **Export ▾ → Implementation pack**: drop the unzipped folder into a repo as `design/` and tell your agent *"Read design/AGENTS.md and follow it."* Small-model prompts (one section at a time) are in `IMPLEMENTATION_PLAN.md`; when it says it is done, *"Run design/VERIFY.md and report pass/fail per line."* Options: per-screen PNG screenshots (needs Chrome, Chromium or Edge on the machine — `LD_CHROME=/path/to/chrome` to point at one), a model-written overview at the top of `ARCHITECTURE.md` (the only part of the pack that calls the model), and writing straight into a folder (e.g. `<repo>/design`) instead of downloading a zip.
 - **Export ▾**: project JSON, design spec (.md), **DESIGN.md**, HTML, React (.jsx + .css, deterministic), React + Tailwind (AI), all screens at once.
@@ -136,7 +138,8 @@ the server binds to 127.0.0.1 and rejects foreign `Origin`/`Host` headers; API k
 - Binds to 127.0.0.1. `--host 0.0.0.0` exposes it to your network (and your API quota) — only on trusted LANs, with `--allow-host <name>`.
 - Requests from other origins are rejected (no CSRF against your config or key); unknown `Host` headers are rejected (DNS rebinding).
 - Generated screens are self-contained HTML with inline CSS and no external resources unless you enable *Allow CDN*.
-- `~/.localdesign/audit.jsonl` records every model call: when, which endpoint/model, prompt size, the first 300 chars of the user prompt, duration, result. Disable with `--no-audit`.
+- `~/.localdesign/audit.jsonl` records every model call: when, which endpoint/model, prompt size, the first 300 chars of the user prompt, duration, result — and, when code is attached, which files were sent (`code_files`). Disable with `--no-audit`.
+- Attached code stays on this machine except for the files a prompt references or you pin; `.env`, private keys, credentials files and lockfiles are never read.
 - Nothing phones home. The only network calls are to the model endpoint you configured.
 
 ## Model notes
@@ -153,7 +156,7 @@ Claude models: reasoning effort defaults to **low** for generation (deep thinkin
 
 ```bash
 pip install -e ".[dev]"
-pytest                      # 139 tests: renderer, parsers, exports, server API against a mock model (no API key needed)
+pytest                      # 169 tests: renderer, parsers, exports, code context, server API against a mock model (no API key needed)
 ```
 
 CI runs the suite on Linux, Windows and macOS × Python 3.10/3.12/3.13 and checks the built wheel ships the static app.
@@ -165,6 +168,7 @@ localdesign/
   server.py        stdlib HTTP server: static app, SSE generation, projects, config, exports, guards, audit
   llm.py           streaming over urllib: OpenAI-compatible + Anthropic, thinking status, truncation detection
   prompts.py       html/spec/element/plan/export prompts, design-system + data context
+  codebase.py      attached code folders: filter, store, @mention resolution, per-prompt context within a budget
   components.py    spec → HTML renderer and component library (30+ node types), JSON repair
   designsystem.py  CSS vars / tailwind config / tokens JSON / HTML / DESIGN.md → tokens; tokens → DESIGN.md
   export.py        HTML → React (.jsx + .css), project → design-spec Markdown
