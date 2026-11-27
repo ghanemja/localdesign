@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### UI kits: browse thousands of open-source elements, or your own
+Library → **UI kits** browses element collections with live previews (hover to animate, dark-background toggle), search over
+names/tags/authors, kit and category filters and infinite scroll. **+ Add kit** imports an open-source pack from GitHub once —
+Uiverse Galaxy (3,373 HTML/CSS elements), SpinKit (12 spinners), three-dots (20 loaders), all MIT — or your own kit from a folder
+or any GitHub repo of `.html` files. Drag an element (straight from its preview) onto a screen, or click ＋; ★ adds it to the
+design system so HTML-engine screens reuse it; ⊕ in the element toolbar saves anything on a screen into *My components*.
+Every element's CSS is scoped on import (per-element class on its roots, prefixed selectors, `:root/html/body` → custom
+properties on the element, renamed `@keyframes`, no `@import`/scripts), so it never restyles the screen. Inserted CSS carries
+an attribution comment. An unzipped copy of a known pack (air-gapped) is recognised as that pack.
+
 ### Code context: attach your existing source, reference files with @
 📎 **Code** in the prompt bar (or drop a folder anywhere on the window) attaches a source folder. Type `@` in the prompt
 for completion over its files and folders: `@src/pages/Settings.tsx`, `@Button`, `@src/components/`. Mentioned files, plus
@@ -12,6 +22,14 @@ sent; unknown `@names` and files that did not fit are reported. The audit log re
 are read; `node_modules`, build output, lockfiles, binaries, `.env` and key files are skipped. Stored in `~/.localdesign/code/`.
 
 ### Fixed
+- Dragging a built-in Library component onto a screen restyled the whole screen (its stylesheet redefined `:root` variables and
+  `body`). It is now scoped to the component, whose token defaults yield to the screen's own.
+- Dragging an element from one screen to another did nothing with a real mouse and left the drag stuck (all screens unclickable
+  until Esc): the source frame keeps the mouse captured, so it now forwards the pointer to the canvas.
+- Selecting an element pushed the whole screen down (the element toolbar was in the layout); it now floats above the frame.
+- Elements dragged between screens or saved to the library no longer carry their source width/height in px.
+- ↻ Regenerating a flow screen dropped its navigation links; it now keeps planned and existing links.
+- Renaming a screen broke every link to it (links are by title); renames now update `data-link`s, spec links and flow plans.
 - While waiting for the model, a new screen showed the red *"No result saved (page was closed mid-generation?)"* error over the
   frame instead of a loading state. Frames now show a progress card: *Waiting for &lt;model&gt;… 12s* → *Model is thinking…* →
   *Writing… 4 KB* (docked while the preview streams in), *Queued* for later screens of a flow. It stays readable when zoomed out.

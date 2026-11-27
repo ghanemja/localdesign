@@ -56,12 +56,34 @@
 
 <aside id="library" class="hidden">
   <div class="libhead">
-    <div class="seg small"><button data-tab="components" class="on">Components</button><button data-tab="assets">My assets</button></div>
+    <div class="seg small"><button data-tab="components" class="on">Components</button><button data-tab="kits" title="Open-source and your own UI element collections: buttons, loaders, toggles, cards… many animated">UI kits</button><button data-tab="assets">My assets</button></div>
     <span class="grow"></span>
     <button class="ic" id="libClose" title="Close">×</button>
   </div>
   <p class="muted small libhint"><b>Drag</b> an item onto a screen, or <b>select a screen and click</b> an item to add it. Components take the current design system's tokens.</p>
   <div id="libComponents" class="libgrid"></div>
+  <div id="libKits" class="hidden">
+    <div class="kitbar">
+      <input id="kitQ" type="search" placeholder="Search elements — e.g. glow button, toggle, skeleton">
+      <select id="kitSel" title="Kit"></select>
+      <select id="kitCat" title="Category"></select>
+      <button type="button" class="ghost ic" id="kitBg" title="Preview on a dark background">◐</button>
+      <button type="button" class="ghost" id="kitAddBtn" title="Import an open-source pack or your own kit">+ Add kit</button>
+    </div>
+    <p class="muted small libhint"><b>Hover</b> a preview to see it animate · <b>drag</b> it onto a screen, or select a screen and click <b>＋</b> · <b>★</b> adds it to your design system so generated screens reuse it.</p>
+    <div id="kitGrid" class="libgrid kitgrid"></div>
+    <div id="kitMore" class="muted small"></div>
+    <div id="kitCatalog" class="hidden">
+      <h3>Open-source packs <span class="muted">— imported once, then work offline</span></h3>
+      <div id="kitCatList"></div>
+      <h3>Your own kit</h3>
+      <p class="muted small">A folder of <code>.html</code> files, one element each, styled with an inline <code>&lt;style&gt;</code> or a <code>&lt;link&gt;</code> to a stylesheet in the folder; subfolders become categories. Each element's CSS is scoped on import, so it never restyles the screen it is dropped on. Scripts are removed.</p>
+      <div class="row"><button type="button" class="ghost" id="kitImportFolder">Import a folder…</button><input type="file" id="kitFolder" webkitdirectory directory multiple hidden></div>
+      <div class="inline"><input id="kitRepo" placeholder="…or any public GitHub repo: owner/name"><button type="button" class="ghost" id="kitImportRepo">Import</button></div>
+      <p class="muted small">Elements you save from a screen (select it, then <b>⊕</b> in its toolbar) go into <b>My components</b>.</p>
+      <p id="kitMsg" class="small"></p>
+    </div>
+  </div>
   <div id="libAssets" class="hidden">
     <div class="row">
       <button type="button" class="ghost" id="assetUpload">⬆ Upload images / logos / icons</button>
@@ -313,6 +335,7 @@
       <button data-act="down" title="Move down (⌥↓)">↓</button>
       <button data-act="dup" title="Duplicate (⌘D)">⧉</button>
       <button data-act="link" title="Link to another screen (prototype)">⇢</button>
+      <button data-act="save" title="Save this element to your library (UI kits → My components)">⊕</button>
       <button data-act="ai" title="Change this element with AI — type in the prompt bar">✦ AI</button>
       <button data-act="delete" title="Delete (⌫)">×</button>
     </div>

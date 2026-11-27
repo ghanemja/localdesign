@@ -8,7 +8,7 @@ PNG = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d494844520000000100
 
 def test_library_catalog_renders_every_sample(app):
     s, d = post(app + "/api/library", {})
-    assert s == 200 and len(d["items"]) == len(C.SAMPLES) and d["style_tag"].startswith('<style data-ld-lib="1">')
+    assert s == 200 and len(d["items"]) == len(C.SAMPLES) and d["style_tag"].startswith('<style data-ld-lib="builtin">:where(:root){')   # scoped: never restyles the screen
     assert all("ld-alert error" not in it["html"] for it in d["items"])
     s, d2 = post(app + "/api/library", {"design_system": {"tokens": {"primary": "#5b4bff"}}})
     assert "--primary:#5b4bff" in d2["css"]
