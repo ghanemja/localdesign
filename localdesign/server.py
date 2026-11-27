@@ -162,17 +162,18 @@ def _stream_to_queue(cfg, idx, sys_p, msgs, q, temperature=None, kind="generate"
             if now - last > interval:
                 q.put({"type": "partial", "i": idx, "html": render(buf), "chars": len(buf)})
                 last = now
-        _finish(q, idx, buf, mode=mode, width=width, ds=ds, data=data)
+        # audit first, then signal done/error: once a client has the result, its audit line is on disk
         audit({**rec, "ok": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
+        _finish(q, idx, buf, mode=mode, width=width, ds=ds, data=data)
     except llm.Truncated as e:
-        _finish(q, idx, buf, warning=str(e), mode=mode, width=width, ds=ds, data=data)
         audit({**rec, "ok": True, "truncated": True, "out_chars": len(buf), "secs": round(time.time() - t0, 1)})
+        _finish(q, idx, buf, warning=str(e), mode=mode, width=width, ds=ds, data=data)
     except llm.LLMError as e:
-        q.put({"type": "error", "i": idx, "message": str(e)})
         audit({**rec, "ok": False, "error": str(e)[:300], "secs": round(time.time() - t0, 1)})
+        q.put({"type": "error", "i": idx, "message": str(e)})
     except Exception as e:  # noqa: BLE001
-        q.put({"type": "error", "i": idx, "message": f"{type(e).__name__}: {e}"})
         audit({**rec, "ok": False, "error": f"{type(e).__name__}: {e}"[:300], "secs": round(time.time() - t0, 1)})
+        q.put({"type": "error", "i": idx, "message": f"{type(e).__name__}: {e}"})
 
 
 def _write_pack(zip_bytes: bytes, dest: str, replace: bool) -> tuple[str, int]:

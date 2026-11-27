@@ -177,3 +177,18 @@ def test_kit_endpoints(app):
     assert post(app + "/api/kits/install", {})[0] == 400
     assert post(app + "/api/kits/install", {"files": []}, {"Origin": "https://evil.com"})[0] == 403
     urllib.request.urlopen(urllib.request.Request(app + "/api/kits/uiverse", method="DELETE"))
+
+
+def test_cache_never_serves_a_stale_kit_after_a_write(kithome):
+    """Windows mtimes are coarse: a write right after another can keep the same mtime. Writes must invalidate the cache."""
+    import os
+    kits.add_mine("A", "<p>a</p>")
+    f = kits.kits_dir() / "mine.json"
+    st = f.stat()
+    assert kits.load("mine")["count"] == 1                       # cached
+    item = kits.add_mine("B", "<p>b</p>")
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))            # same mtime as before, like a coarse clock
+    assert kits.load("mine")["count"] == 2
+    assert kits.remove_item("mine", item["id"])
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert kits.load("mine")["count"] == 1

@@ -471,7 +471,7 @@ def _license(files: dict[str, str]) -> str:
 
 
 # ------------------------------------------------------------------ store + query
-_CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE: dict[str, tuple[tuple[int, int], dict]] = {}
 _LOCK = threading.Lock()
 
 
@@ -487,9 +487,16 @@ def install(kit_id: str, name: str, files: dict[str, str], source: dict) -> dict
         cats[it["category"]] = cats.get(it["category"], 0) + 1
     kit = {"id": kit_id, "name": name, "source": {**source, "license_text": _license(files)}, "css": shared,
            "categories": dict(sorted(cats.items())), "skipped": skipped, "count": len(items), "installed": time.time(), "items": items}
+    _save(kit_id, kit)
+    return summary(kit)
+
+
+def _save(kit_id: str, kit: dict) -> None:
+    """Write a kit and drop its cache entry (mtimes can repeat on coarse clocks, e.g. Windows, so never rely on them alone)."""
     kits_dir().mkdir(parents=True, exist_ok=True)
     (kits_dir() / f"{kit_id}.json").write_text(json.dumps(kit))
-    return summary(kit)
+    with _LOCK:
+        _CACHE.pop(kit_id, None)
 
 
 def summary(kit: dict) -> dict:
@@ -503,7 +510,8 @@ def load(kit_id: str) -> dict | None:
         return None
     f = kits_dir() / f"{kit_id}.json"
     try:
-        mt = f.stat().st_mtime
+        st = f.stat()
+        mt = (st.st_mtime_ns, st.st_size)
     except OSError:
         return None
     with _LOCK:
@@ -569,8 +577,7 @@ def add_mine(name: str, html: str, category: str = "Saved") -> dict:
     for it in kit["items"]:
         kit["categories"][it["category"]] = kit["categories"].get(it["category"], 0) + 1
     kit["count"] = len(kit["items"])
-    kits_dir().mkdir(parents=True, exist_ok=True)
-    (kits_dir() / f"{MINE}.json").write_text(json.dumps(kit))
+    _save(MINE, kit)
     return kit["items"][0]
 
 
@@ -590,8 +597,7 @@ def add_shader(name: str, glsl: str, author: str = "", source_url: str = "", lic
     for it in kit["items"]:
         kit["categories"][it["category"]] = kit["categories"].get(it["category"], 0) + 1
     kit["count"] = len(kit["items"])
-    kits_dir().mkdir(parents=True, exist_ok=True)
-    (kits_dir() / f"{MINE}.json").write_text(json.dumps(kit))
+    _save(MINE, kit)
     return item
 
 
@@ -608,5 +614,5 @@ def remove_item(kit_id: str, item_id: str) -> bool:
     kit["categories"] = {}
     for it in kit["items"]:
         kit["categories"][it["category"]] = kit["categories"].get(it["category"], 0) + 1
-    (kits_dir() / f"{kit_id}.json").write_text(json.dumps(kit))
+    _save(kit_id, kit)
     return True
